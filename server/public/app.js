@@ -213,13 +213,35 @@ function formatTime(ts) {
     return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
+const AVATAR_PALETTE = [
+    'linear-gradient(135deg, #00a884 0%, #008f6f 100%)', // Emerald
+    'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', // Blue
+    'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)', // Violet
+    'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)', // Orange
+    'linear-gradient(135deg, #db2777 0%, #be185d 100%)', // Rose
+    'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)', // Cyan
+    'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)'  // Indigo
+];
+
+function getAvatarBg(str) {
+    let hash = 0;
+    for (let i = 0; i < (str || '').length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+    }
+    return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+}
+
 function getAvatarInitials(name) {
     if (!name) return 'W';
-    const words = name.trim().split(' ');
+    // Remove symbols, emojis, and non-letter/digit
+    const clean = name.replace(/[^\p{L}\p{N}\s]/gu, '').trim();
+    if (!clean) return name.slice(0, 1).toUpperCase() || 'W';
+    const words = clean.split(/\s+/).filter(Boolean);
     if (words.length > 1) {
         return (words[0][0] + words[1][0]).toUpperCase();
     }
-    return name.slice(0, 2).toUpperCase();
+    return clean.slice(0, 2).toUpperCase();
 }
 
 function renderChatList(chats) {
@@ -255,10 +277,11 @@ function renderChatList(chats) {
         const initials = getAvatarInitials(chat.name);
         const unreadBadge = chat.unread > 0 ? ('<span class="unread-badge">' + chat.unread + '</span>') : '';
         const timeStr = formatTime(chat.timestamp);
-        const groupIcon = chat.isGroup ? '<i class="fa-solid fa-users" style="margin-right: 4px; font-size: 11px; opacity: 0.7;"></i>' : '';
+        const groupIcon = chat.isGroup ? '<i class="fa-solid fa-users" style="margin-right: 6px; font-size: 12px; color: #8696a0;"></i>' : '';
+        const bgGradient = getAvatarBg(chat.jid || chat.name);
 
         item.innerHTML = 
-            '<div class="chat-avatar">' + initials + '</div>' +
+            '<div class="chat-avatar" style="background: ' + bgGradient + ';">' + initials + '</div>' +
             '<div class="chat-info">' +
                 '<div class="chat-info-top">' +
                     '<span class="chat-name">' + groupIcon + escapeHtml(chat.name || chat.jid.split('@')[0]) + '</span>' +
@@ -278,6 +301,8 @@ window.selectChat = async function(jid) {
     currentChatJid = jid;
     const chat = allChats.find(c => c.jid === jid);
 
+    const bgGradient = getAvatarBg(chat?.jid || jid);
+    activeAvatar.style.background = bgGradient;
     activeAvatar.textContent = getAvatarInitials(chat?.name || jid);
     activeContactName.textContent = chat?.name || jid.split('@')[0];
     activeContactSubtitle.textContent = chat?.isGroup ? 'Grup WhatsApp' : (jid.includes('@') ? jid.split('@')[0] : 'Online');
