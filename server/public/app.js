@@ -10,9 +10,6 @@ let stagedAttachment = null; // { base64, mimeType, fileName }
 // PIN & Auth State
 let authToken = localStorage.getItem('wapro_pin_token') || '';
 let isPinSet = true;
-let currentPinInput = '';
-let setupPinFirst = '';
-let pinSetupStep = 1;
 
 // DOM Elements
 const connectionPill = document.getElementById('connectionPill');
@@ -56,14 +53,24 @@ const btnCancelAttachment = document.getElementById('btnCancelAttachment');
 const btnToggleEmoji = document.getElementById('btnToggleEmoji');
 const emojiTray = document.getElementById('emojiTray');
 
-// PIN Elements
+// PIN Elements (Modern Professional)
 const pinModal = document.getElementById('pinModal');
+const pinCardModern = document.querySelector('.pin-card-modern');
 const pinTitle = document.getElementById('pinTitle');
 const pinSubtitle = document.getElementById('pinSubtitle');
-const pinDots = document.querySelectorAll('#pinDots .dot');
-const pinErrorMessage = document.getElementById('pinErrorMessage');
-const pinCard = document.querySelector('.pin-card');
-const pinKeypadBtns = document.querySelectorAll('.key-btn');
+
+const pinVerifyForm = document.getElementById('pinVerifyForm');
+const pinInput = document.getElementById('pinInput');
+const btnTogglePinEye = document.getElementById('btnTogglePinEye');
+const eyeIcon = document.getElementById('eyeIcon');
+const pinErrorMsg = document.getElementById('pinErrorMsg');
+const btnSubmitUnlock = document.getElementById('btnSubmitUnlock');
+
+const pinSetupForm = document.getElementById('pinSetupForm');
+const pinSetupInput = document.getElementById('pinSetupInput');
+const pinSetupConfirm = document.getElementById('pinSetupConfirm');
+const pinSetupErrorMsg = document.getElementById('pinSetupErrorMsg');
+const btnSubmitSetup = document.getElementById('btnSubmitSetup');
 
 // Request Browser Notifications on Click
 if ('Notification' in window && Notification.permission === 'default') {
@@ -104,157 +111,44 @@ async function authFetch(url, options = {}) {
     return res;
 }
 
-// PIN UI Helpers
-function updatePinDots() {
-    pinDots.forEach((dot, idx) => {
-        if (idx < currentPinInput.length) {
-            dot.classList.add('filled');
-        } else {
-            dot.classList.remove('filled');
-        }
-    });
-}
-
+// PIN UI Helpers & Logic
 function shakePinCard() {
-    if (!pinCard) return;
-    pinCard.classList.remove('shake-animation');
-    void pinCard.offsetWidth; // trigger reflow
-    pinCard.classList.add('shake-animation');
-}
-
-function showPinError(msg) {
-    if (!pinErrorMessage) return;
-    pinErrorMessage.textContent = msg;
-    pinErrorMessage.style.display = 'block';
-}
-
-function clearPinError() {
-    if (!pinErrorMessage) return;
-    pinErrorMessage.textContent = '';
-    pinErrorMessage.style.display = 'none';
+    if (!pinCardModern) return;
+    pinCardModern.classList.remove('shake-animation');
+    void pinCardModern.offsetWidth; // trigger reflow
+    pinCardModern.classList.add('shake-animation');
 }
 
 function showPinModal(hasPin = true) {
     isPinSet = hasPin;
-    currentPinInput = '';
-    setupPinFirst = '';
-    pinSetupStep = 1;
-    clearPinError();
-    updatePinDots();
 
     if (!hasPin) {
+        // Setup Form
+        pinVerifyForm.style.display = 'none';
+        pinSetupForm.style.display = 'flex';
         pinTitle.textContent = 'Buat PIN Keamanan';
-        pinSubtitle.textContent = 'Ketik 6 digit PIN untuk mengunci akses WaPro Anda:';
+        pinSubtitle.textContent = 'Tentukan PIN (4-8 angka) untuk mengamankan link WhatsApp Web Anda:';
+        pinSetupInput.value = '';
+        pinSetupConfirm.value = '';
+        pinSetupErrorMsg.style.display = 'none';
+        setTimeout(() => pinSetupInput.focus(), 120);
     } else {
-        pinTitle.textContent = 'WaPro Terkunci';
-        pinSubtitle.textContent = 'Masukkan PIN 6 digit untuk membuka:';
+        // Verify Form
+        pinVerifyForm.style.display = 'flex';
+        pinSetupForm.style.display = 'none';
+        pinTitle.textContent = 'WhatsApp Web Terkunci';
+        pinSubtitle.textContent = 'Masukkan PIN keamanan untuk membuka akses chat';
+        pinInput.value = '';
+        pinErrorMsg.style.display = 'none';
+        setTimeout(() => pinInput.focus(), 120);
     }
 
     pinModal.style.display = 'flex';
 }
 
-function handlePinDigit(digit) {
-    if (currentPinInput.length >= 6) return;
-    clearPinError();
-    currentPinInput += digit;
-    updatePinDots();
-
-    if (currentPinInput.length === 6) {
-        setTimeout(processPinSubmission, 150);
-    }
-}
-
-function handlePinBackspace() {
-    if (currentPinInput.length > 0) {
-        clearPinError();
-        currentPinInput = currentPinInput.slice(0, -1);
-        updatePinDots();
-    }
-}
-
-function handlePinClear() {
-    clearPinError();
-    currentPinInput = '';
-    updatePinDots();
-}
-
-async function processPinSubmission() {
-    if (!isPinSet) {
-        // Setup Mode (first time)
-        if (pinSetupStep === 1) {
-            setupPinFirst = currentPinInput;
-            currentPinInput = '';
-            pinSetupStep = 2;
-            updatePinDots();
-            pinTitle.textContent = 'Konfirmasi PIN';
-            pinSubtitle.textContent = 'Ketik ulang 6 digit PIN Anda:';
-            return;
-        } else if (pinSetupStep === 2) {
-            if (currentPinInput !== setupPinFirst) {
-                showPinError('PIN konfirmasi tidak cocok! Silakan coba lagi.');
-                shakePinCard();
-                currentPinInput = '';
-                setupPinFirst = '';
-                pinSetupStep = 1;
-                updatePinDots();
-                pinTitle.textContent = 'Buat PIN Keamanan';
-                pinSubtitle.textContent = 'Ketik 6 digit PIN untuk mengunci akses WaPro Anda:';
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/auth/setup', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pin: currentPinInput })
-                });
-                const data = await res.json();
-                if (data.success && data.token) {
-                    authToken = data.token;
-                    localStorage.setItem('wapro_pin_token', authToken);
-                    isPinSet = true;
-                    unlockApp();
-                } else {
-                    showPinError(data.error || 'Gagal menyimpan PIN');
-                    shakePinCard();
-                    currentPinInput = '';
-                    updatePinDots();
-                }
-            } catch (e) {
-                showPinError('Error: ' + e.message);
-                shakePinCard();
-            }
-        }
-    } else {
-        // Verification Mode
-        try {
-            const res = await fetch('/api/auth/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pin: currentPinInput })
-            });
-            const data = await res.json();
-            if (data.success && data.token) {
-                authToken = data.token;
-                localStorage.setItem('wapro_pin_token', authToken);
-                unlockApp();
-            } else {
-                showPinError(data.error || 'PIN salah!');
-                shakePinCard();
-                currentPinInput = '';
-                updatePinDots();
-            }
-        } catch (e) {
-            showPinError('Error: ' + e.message);
-            shakePinCard();
-        }
-    }
-}
-
 function unlockApp() {
     pinModal.style.display = 'none';
-    currentPinInput = '';
-    updatePinDots();
+    if (pinInput) pinInput.value = '';
     initWebSocket();
 }
 
@@ -271,6 +165,117 @@ function lockApp() {
         try { ws.close(); } catch (e) {}
     }
     showPinModal(isPinSet);
+}
+
+// Eye Toggle for PIN Input
+if (btnTogglePinEye && pinInput) {
+    btnTogglePinEye.addEventListener('click', () => {
+        const isPassword = pinInput.type === 'password';
+        pinInput.type = isPassword ? 'text' : 'password';
+        eyeIcon.className = isPassword ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye';
+    });
+}
+
+// Handle PIN Verification Submission
+if (pinVerifyForm) {
+    pinVerifyForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pin = pinInput.value.trim();
+        if (!pin) {
+            pinErrorMsg.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> Masukkan PIN Anda';
+            pinErrorMsg.style.display = 'flex';
+            shakePinCard();
+            pinInput.focus();
+            return;
+        }
+
+        btnSubmitUnlock.disabled = true;
+        btnSubmitUnlock.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memverifikasi...';
+
+        try {
+            const res = await fetch('/api/auth/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin })
+            });
+            const data = await res.json();
+            if (data.success && data.token) {
+                authToken = data.token;
+                localStorage.setItem('wapro_pin_token', authToken);
+                unlockApp();
+            } else {
+                pinErrorMsg.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> ' + (data.error || 'PIN salah!');
+                pinErrorMsg.style.display = 'flex';
+                shakePinCard();
+                pinInput.select();
+            }
+        } catch (err) {
+            pinErrorMsg.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> Gagal menghubungi server';
+            pinErrorMsg.style.display = 'flex';
+            shakePinCard();
+        } finally {
+            btnSubmitUnlock.disabled = false;
+            btnSubmitUnlock.innerHTML = '<span>Buka Kunci</span> <i class="fa-solid fa-arrow-right"></i>';
+        }
+    });
+}
+
+// Handle PIN Setup Submission (First Time)
+if (pinSetupForm) {
+    pinSetupForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const p1 = pinSetupInput.value.trim();
+        const p2 = pinSetupConfirm.value.trim();
+
+        if (!p1 || p1.length < 4) {
+            pinSetupErrorMsg.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> PIN minimal 4 angka';
+            pinSetupErrorMsg.style.display = 'flex';
+            shakePinCard();
+            pinSetupInput.focus();
+            return;
+        }
+
+        if (p1 !== p2) {
+            pinSetupErrorMsg.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> Konfirmasi PIN tidak sama!';
+            pinSetupErrorMsg.style.display = 'flex';
+            shakePinCard();
+            pinSetupConfirm.select();
+            return;
+        }
+
+        btnSubmitSetup.disabled = true;
+        btnSubmitSetup.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
+
+        try {
+            const res = await fetch('/api/auth/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin: p1 })
+            });
+            const data = await res.json();
+            if (data.success && data.token) {
+                authToken = data.token;
+                localStorage.setItem('wapro_pin_token', authToken);
+                isPinSet = true;
+                unlockApp();
+            } else {
+                pinSetupErrorMsg.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> ' + (data.error || 'Gagal menyimpan PIN');
+                pinSetupErrorMsg.style.display = 'flex';
+                shakePinCard();
+            }
+        } catch (err) {
+            pinSetupErrorMsg.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> Gagal menghubungi server';
+            pinSetupErrorMsg.style.display = 'flex';
+            shakePinCard();
+        } finally {
+            btnSubmitSetup.disabled = false;
+            btnSubmitSetup.innerHTML = '<span>Simpan & Buka WhatsApp</span> <i class="fa-solid fa-check"></i>';
+        }
+    });
+}
+
+if (btnLock) {
+    btnLock.addEventListener('click', lockApp);
 }
 
 // Status Updater
@@ -773,36 +778,6 @@ btnLogout.addEventListener('click', async () => {
         alert('Gagal logout: ' + e.message);
     }
 });
-
-// Keypad & Keyboard Listeners for PIN
-pinKeypadBtns.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        const key = btn.getAttribute('data-key');
-        if (key === 'clear') handlePinClear();
-        else if (key === 'backspace') handlePinBackspace();
-        else handlePinDigit(key);
-    });
-});
-
-window.addEventListener('keydown', (e) => {
-    if (pinModal && pinModal.style.display === 'flex') {
-        if (e.key >= '0' && e.key <= '9') {
-            e.preventDefault();
-            handlePinDigit(e.key);
-        } else if (e.key === 'Backspace') {
-            e.preventDefault();
-            handlePinBackspace();
-        } else if (e.key === 'Escape') {
-            e.preventDefault();
-            handlePinClear();
-        }
-    }
-});
-
-if (btnLock) {
-    btnLock.addEventListener('click', lockApp);
-}
 
 // Initial Boot: Check Auth Status
 async function checkAuthAndStart() {
