@@ -11,3 +11,5 @@ tools/platform-tools/
 server/.cf_token
 .pin_config.json
 server/.pin_config.json
+sessions/
+server/sessions/

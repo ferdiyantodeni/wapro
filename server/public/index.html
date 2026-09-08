@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=2.0">
+    <link rel="stylesheet" href="style.css?v=3.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -22,7 +22,6 @@
                     </div>
                 </div>
                 <div class="header-actions">
-                    <button id="btnLock" title="Kunci WaPro (PIN)"><i class="fa-solid fa-lock"></i></button>
                     <button id="btnNewChat" title="Chat Baru"><i class="fa-solid fa-square-plus"></i></button>
                     <button id="btnLogout" title="Putus Sesi / Keluar"><i class="fa-solid fa-arrow-right-from-bracket"></i></button>
                 </div>
@@ -165,58 +164,6 @@
         </div>
     </div>
 
-    <!-- Modern Professional PIN Lock Screen -->
-    <div class="modal-overlay pin-overlay" id="pinModal" style="display: flex;">
-        <div class="pin-card-modern">
-            <div class="pin-brand-icon">
-                <i class="fa-solid fa-shield-halved"></i>
-            </div>
-            
-            <div class="pin-text-block">
-                <h2 id="pinTitle">WhatsApp Web Terkunci</h2>
-                <p id="pinSubtitle">Masukkan PIN keamanan untuk membuka akses chat</p>
-            </div>
-
-            <!-- Verify Mode Form -->
-            <form id="pinVerifyForm" class="pin-form" autocomplete="off" onsubmit="return false;">
-                <div class="pin-input-box">
-                    <i class="fa-solid fa-key icon-left"></i>
-                    <input type="password" id="pinInput" placeholder="Ketik PIN Anda..." maxlength="8" inputmode="numeric" autofocus autocomplete="off">
-                    <button type="button" id="btnTogglePinEye" class="btn-eye" title="Tampilkan/Sembunyikan PIN" tabindex="-1">
-                        <i class="fa-regular fa-eye" id="eyeIcon"></i>
-                    </button>
-                </div>
-                <div id="pinErrorMsg" class="pin-error-alert" style="display: none;"></div>
-                <button type="submit" id="btnSubmitUnlock" class="btn-pin-submit">
-                    <span>Buka Kunci</span>
-                    <i class="fa-solid fa-arrow-right"></i>
-                </button>
-            </form>
-
-            <!-- Setup Mode Form (First time only) -->
-            <form id="pinSetupForm" class="pin-form" style="display: none;" autocomplete="off" onsubmit="return false;">
-                <div class="pin-input-box" style="margin-bottom: 12px;">
-                    <i class="fa-solid fa-lock icon-left"></i>
-                    <input type="password" id="pinSetupInput" placeholder="Buat PIN Baru (4-8 angka)..." maxlength="8" inputmode="numeric" autocomplete="off">
-                </div>
-                <div class="pin-input-box">
-                    <i class="fa-solid fa-circle-check icon-left"></i>
-                    <input type="password" id="pinSetupConfirm" placeholder="Ulangi PIN Baru..." maxlength="8" inputmode="numeric" autocomplete="off">
-                </div>
-                <div id="pinSetupErrorMsg" class="pin-error-alert" style="display: none;"></div>
-                <button type="submit" id="btnSubmitSetup" class="btn-pin-submit">
-                    <span>Simpan & Buka WhatsApp</span>
-                    <i class="fa-solid fa-check"></i>
-                </button>
-            </form>
-
-            <div class="pin-security-badge">
-                <i class="fa-solid fa-lock"></i>
-                <span>Terenkripsi & Dilindungi WaPro Mobile Relay</span>
-            </div>
-        </div>
-    </div>
-
-    <script src="app.js?v=2.0"></script>
+    <script src="app.js?v=3.0"></script>
 </body>
 </html>
