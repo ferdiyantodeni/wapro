@@ -7,3 +7,5 @@ server/store_data.json
 tools/platform-tools/
 *.zip
 .ngrok_domain
+.cf_token
+server/.cf_token
