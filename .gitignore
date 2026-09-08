@@ -1,0 +1,9 @@
+node_modules/
+server/node_modules/
+server/session_auth/
+session_auth/
+store_data.json
+server/store_data.json
+tools/platform-tools/
+*.zip
+.ngrok_domain

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WaPro - WhatsApp Web Relay</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <aside class="sidebar">
+            <header class="sidebar-header">
+                <div class="user-profile">
+                    <div class="user-avatar" id="myAvatar"><i class="fa-solid fa-user"></i></div>
+                    <div class="user-meta">
+                        <span class="user-name" id="myUserName">WaPro Relay</span>
+                        <span class="status-pill status-connecting" id="connectionPill">
+                            <span class="status-dot"></span>
+                            <span class="status-text" id="statusText">Menghubungkan...</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button id="btnNewChat" title="Chat Baru"><i class="fa-solid fa-square-plus"></i></button>
+                    <button id="btnLogout" title="Putus Sesi / Keluar"><i class="fa-solid fa-arrow-right-from-bracket"></i></button>
+                </div>
+            </header>
+
+            <div class="search-box-wrapper">
+                <div class="search-box">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="searchChatInput" placeholder="Cari chat atau kontak...">
+                </div>
+            </div>
+
+            <!-- Chat Filters (All, Unread, Groups) -->
+            <div class="chat-filters">
+                <button class="filter-pill active" data-filter="all">Semua</button>
+                <button class="filter-pill" data-filter="unread">Belum Dibaca</button>
+                <button class="filter-pill" data-filter="group">Grup</button>
+            </div>
+
+            <div class="chat-list" id="chatList">
+                <div class="empty-state-list">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i>
+                    <p>Memuat daftar chat...</p>
+                </div>
+            </div>
+        </aside>
+
+        <main class="chat-area">
+            <div class="empty-chat-view" id="emptyChatView">
+                <div class="empty-chat-box">
+                    <div class="app-logo-badge"><i class="fa-brands fa-whatsapp"></i></div>
+                    <h2>WaPro Desktop Client</h2>
+                    <p>Terhubung langsung melalui server lokal HP Android Anda.<br>Aman dari blokir firewall kantor (GlobalProtect).</p>
+                    <div class="security-note">
+                        <i class="fa-solid fa-lock"></i> Terenkripsi End-to-end via Mobile Relay
+                    </div>
+                </div>
+            </div>
+
+            <div class="active-chat-view" id="activeChatView" style="display: none;">
+                <header class="chat-header">
+                    <div class="contact-avatar" id="activeAvatar">U</div>
+                    <div class="contact-details">
+                        <h3 id="activeContactName">Kontak</h3>
+                        <span class="contact-subtitle" id="activeContactSubtitle">WhatsApp</span>
+                    </div>
+                </header>
+
+                <div class="messages-container" id="messagesContainer"></div>
+
+                <!-- Attachment Preview Banner (if file selected or pasted) -->
+                <div class="attachment-preview-bar" id="attachmentPreviewBar" style="display: none;">
+                    <div class="preview-info">
+                        <i class="fa-solid fa-file-arrow-up"></i>
+                        <span id="attachmentFileName">file.png</span>
+                    </div>
+                    <button id="btnCancelAttachment" title="Hapus Lampiran"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+
+                <!-- Quick Emoji Tray -->
+                <div class="emoji-tray" id="emojiTray" style="display: none;">
+                    <span class="emoji-item">👍</span>
+                    <span class="emoji-item">❤️</span>
+                    <span class="emoji-item">😂</span>
+                    <span class="emoji-item">🙏</span>
+                    <span class="emoji-item">😊</span>
+                    <span class="emoji-item">🔥</span>
+                    <span class="emoji-item">🎉</span>
+                    <span class="emoji-item">ok</span>
+                    <span class="emoji-item"> siap</span>
+                    <span class="emoji-item">✅</span>
+                    <span class="emoji-item">👏</span>
+                    <span class="emoji-item">😁</span>
+                    <span class="emoji-item">😅</span>
+                    <span class="emoji-item">💯</span>
+                </div>
+
+                <footer class="chat-input-bar">
+                    <button class="btn-input-action" id="btnToggleEmoji" title="Emoji"><i class="fa-regular fa-face-smile"></i></button>
+                    <button class="btn-input-action" id="btnAttach" title="Kirim Gambar / Dokumen"><i class="fa-solid fa-paperclip"></i></button>
+                    <input type="file" id="fileAttachmentInput" style="display: none;">
+                    <input type="text" id="messageInput" placeholder="Ketik pesan atau tekan Ctrl+V untuk tempel gambar..." autocomplete="off">
+                    <button id="btnSendMessage" title="Kirim"><i class="fa-solid fa-paper-plane"></i></button>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <div class="modal-overlay" id="loginModal" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <i class="fa-brands fa-whatsapp whatsapp-icon"></i>
+                <h2>Tautkan WhatsApp</h2>
+                <p>Pilih cara menghubungkan _WhatsApp_ Anda:</p>
+            </div>
+
+            <div class="modal-tabs">
+                <button class="tab-btn active" id="tabPairingBtn"><i class="fa-solid fa-mobile-screen"></i> Kode Pairing (Disarankan)</button>
+                <button class="tab-btn" id="tabQrBtn"><i class="fa-solid fa-qrcode"></i> Scan QR</button>
+            </div>
+
+            <div class="tab-panel" id="tabPairingPanel">
+                <p class="tab-instruction">Masukkan nomor WhatsApp eta HP Anda:</p>
+                <div class="input-group">
+                    <input type="tel" id="inputPhoneNumber" placeholder="Contoh: 08123456789 atau 628123456789">
+                    <button id="btnRequestPairingCode">Dapatkan Kode</button>
+                </div>
+                <div class="pairing-box" id="pairingBox" style="display: none;">
+                    <span class="pairing-label">Masukkan 8 digit kode ini di WhatsApp HP:</span>
+                    <div class="pairing-code" id="pairingCodeDisplay">--------</div>
+                    <ol class="pairing-steps">
+                        <li>Buka WhatsApp di HP Anda</li>
+                        <li>Tekan Titik Tiga (pojok kanan atas) > <b>Perangkat Tertaut</b></li>
+                        <li>Pilih <b>Tautkan Perangkat</b></li>
+                        <li>Pilih <b>Tautkan dengan nomor telepon saja</b> di bagian bawah</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="tab-panel" id="tabQrPanel" style="display: none;">
+                <div class="qr-container">
+                    <img id="qrImage" src="" alt="QR Code WhatsApp">
+                    <p>Buka WhatsApp di HP > Perangkat Tertaut > Scan QR Code ini</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="newChatModal" style="display: none;">
+        <div class="modal-card modal-small">
+            <h3>Mulai Chat Baru</h3>
+            <p>Ketik nomor WhatsApp tujuan:</p>
+            <div class="input-group">
+                <input type="tel" id="newChatPhone" placeholder="Contoh: 081234567890">
+                <button id="btnStartNewChat">Buka Chat</button>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" id="btnCancelNewChat">Batal</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
