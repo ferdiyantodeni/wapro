@@ -3,6 +3,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const cors = require('cors');
 const qrcode = require('qrcode');
 const pino = require('pino');
@@ -27,6 +28,46 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 8080;
 const AUTH_DIR = path.join(__dirname, 'session_auth');
 const DATA_FILE = path.join(__dirname, 'store_data.json');
+const PIN_FILE = path.join(__dirname, '.pin_config.json');
+
+// PIN Authentication & Session Store
+const activeSessions = new Set();
+
+function hashPin(pin, salt) {
+    return crypto.createHash('sha256').update(String(pin) + salt).digest('hex');
+}
+
+function isPinConfigured() {
+    return fs.existsSync(PIN_FILE);
+}
+
+function verifyPin(enteredPin) {
+    if (!isPinConfigured()) return false;
+    try {
+        const conf = JSON.parse(fs.readFileSync(PIN_FILE, 'utf-8'));
+        const h = hashPin(enteredPin, conf.salt);
+        return h === conf.hash;
+    } catch (e) {
+        return false;
+    }
+}
+
+function setPin(newPin) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = hashPin(newPin, salt);
+    fs.writeFileSync(PIN_FILE, JSON.stringify({ hash, salt, createdAt: Date.now() }, null, 2), 'utf-8');
+}
+
+function generateSessionToken() {
+    const token = crypto.randomBytes(32).toString('hex');
+    activeSessions.add(token);
+    return token;
+}
+
+function isValidToken(token) {
+    if (!token) return false;
+    return activeSessions.has(token);
+}
 
 // In-memory data store
 let store = {
@@ -59,18 +100,8 @@ let currentPairingCode = null;
 let connectionState = 'connecting'; // 'connecting', 'qr', 'pairing', 'open', 'close'
 let currentUser = null;
 
-// Broadcast to all connected web clients
-function broadcast(event, data) {
-    const payload = JSON.stringify({ event, data });
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(payload);
-        }
-    });
-}
-
-wss.on('connection', (ws) => {
-    // Send immediate initial state
+function sendInit(ws) {
+    if (ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({
         event: 'init',
         data: {
@@ -81,6 +112,54 @@ wss.on('connection', (ws) => {
             chats: Object.values(store.chats).sort((a, b) => b.timestamp - a.timestamp)
         }
     }));
+}
+
+// Broadcast to authenticated connected web clients
+function broadcast(event, data) {
+    const payload = JSON.stringify({ event, data });
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN && client.authenticated) {
+            client.send(payload);
+        }
+    });
+}
+
+wss.on('connection', (ws, req) => {
+    let token = null;
+    try {
+        const parsed = new URL(req.url, 'http://localhost');
+        token = parsed.searchParams.get('token');
+    } catch (e) {}
+
+    const isAuthed = isValidToken(token);
+    ws.authenticated = isAuthed;
+
+    if (isAuthed) {
+        sendInit(ws);
+    } else {
+        ws.send(JSON.stringify({
+            event: 'auth_required',
+            data: { isPinSet: isPinConfigured() }
+        }));
+    }
+
+    ws.on('message', (messageStr) => {
+        try {
+            const parsed = JSON.parse(messageStr);
+            if (parsed.event === 'auth') {
+                if (isValidToken(parsed.token)) {
+                    ws.authenticated = true;
+                    ws.send(JSON.stringify({ event: 'auth_success' }));
+                    sendInit(ws);
+                } else {
+                    ws.send(JSON.stringify({
+                        event: 'auth_failed',
+                        error: 'Token tidak valid'
+                    }));
+                }
+            }
+        } catch (e) {}
+    });
 });
 
 // Helper to unwrap message content from ephemeral/viewOnce/etc
@@ -395,6 +474,80 @@ async function startWhatsApp() {
         }
     });
 }
+
+// Auth Middleware: protect all /api routes except /api/auth/* and /api/avatar/*
+app.use('/api', (req, res, next) => {
+    if (req.path.startsWith('/auth/')) return next();
+    if (req.path.startsWith('/avatar/')) return next();
+
+    if (!isPinConfigured()) {
+        return res.status(401).json({ error: 'PIN_NOT_SET', isPinSet: false });
+    }
+
+    const token = req.headers['x-auth-token'] || req.query.token;
+    if (!isValidToken(token)) {
+        return res.status(401).json({ error: 'UNAUTHORIZED', isPinSet: true });
+    }
+
+    next();
+});
+
+// Authentication Endpoints
+// 0a. Check PIN setup status & current token validity
+app.get('/api/auth/status', (req, res) => {
+    const token = req.headers['x-auth-token'] || req.query.token;
+    res.json({
+        isPinSet: isPinConfigured(),
+        isAuthenticated: isValidToken(token)
+    });
+});
+
+// 0b. Validate existing token
+app.get('/api/auth/check', (req, res) => {
+    const token = req.headers['x-auth-token'] || req.query.token;
+    if (isValidToken(token)) {
+        return res.json({ authenticated: true });
+    }
+    return res.status(401).json({ authenticated: false, isPinSet: isPinConfigured() });
+});
+
+// 0c. Setup initial PIN (first time only)
+app.post('/api/auth/setup', (req, res) => {
+    if (isPinConfigured()) {
+        return res.status(400).json({ error: 'PIN keamanan sudah pernah dibuat sebelumnya' });
+    }
+    const { pin } = req.body;
+    if (!pin || String(pin).trim().length < 4 || String(pin).trim().length > 8) {
+        return res.status(400).json({ error: 'PIN harus berupa 4 sampai 8 digit angka' });
+    }
+    setPin(String(pin).trim());
+    const token = generateSessionToken();
+    res.json({ success: true, token });
+});
+
+// 0d. Verify PIN and return session token
+app.post('/api/auth/verify', (req, res) => {
+    if (!isPinConfigured()) {
+        return res.status(400).json({ error: 'PIN belum dikonfigurasi', isPinSet: false });
+    }
+    const { pin } = req.body;
+    if (!pin) {
+        return res.status(400).json({ error: 'PIN wajib diisi' });
+    }
+    if (verifyPin(String(pin).trim())) {
+        const token = generateSessionToken();
+        res.json({ success: true, token });
+    } else {
+        res.status(401).json({ success: false, error: 'PIN yang Anda masukkan salah' });
+    }
+});
+
+// 0e. Invalidate current session (Lock)
+app.post('/api/auth/logout-session', (req, res) => {
+    const token = req.headers['x-auth-token'] || req.body?.token;
+    if (token) activeSessions.delete(token);
+    res.json({ success: true });
+});
 
 // REST API Endpoints
 

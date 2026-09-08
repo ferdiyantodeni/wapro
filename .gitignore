@@ -9,3 +9,5 @@ tools/platform-tools/
 .ngrok_domain
 .cf_token
 server/.cf_token
+.pin_config.json
+server/.pin_config.json

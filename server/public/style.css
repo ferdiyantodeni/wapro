@@ -729,4 +729,151 @@ body {
   color: #8696a0;
 }
 
+/* PIN Lock Screen Styles */
+.pin-overlay {
+  z-index: 9999;
+  background-color: rgba(11, 20, 26, 0.96);
+  backdrop-filter: blur(12px);
+}
+
+.pin-card {
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+  padding: 32px 24px;
+  border-radius: 16px;
+  background-color: #1f2c34;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+  border: 1px solid #2a3942;
+  animation: fadeInModal 0.25s ease-out;
+}
+
+.pin-header {
+  margin-bottom: 24px;
+}
+
+.pin-icon-badge {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  background: rgba(0, 168, 132, 0.15);
+  border: 2px solid #00a884;
+  color: #00a884;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+
+.pin-header h2 {
+  font-size: 20px;
+  color: #e9edef;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.pin-header p {
+  font-size: 13px;
+  color: #8696a0;
+  line-height: 1.4;
+}
+
+.pin-dots {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin: 20px 0 16px;
+}
+
+.pin-dots .dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #3b4a54;
+  background-color: transparent;
+  transition: all 0.15s ease-in-out;
+}
+
+.pin-dots .dot.filled {
+  border-color: #00a884;
+  background-color: #00a884;
+  transform: scale(1.15);
+  box-shadow: 0 0 8px rgba(0, 168, 132, 0.4);
+}
+
+.pin-error {
+  color: #f15c6d;
+  font-size: 13px;
+  margin-bottom: 12px;
+  min-height: 18px;
+  font-weight: 500;
+}
+
+.pin-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+.key-btn {
+  height: 56px;
+  background-color: #2a3942;
+  color: #e9edef;
+  border: none;
+  border-radius: 12px;
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.05s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.key-btn:hover {
+  background-color: #3b4a54;
+}
+
+.key-btn:active {
+  transform: scale(0.94);
+  background-color: #00a884;
+  color: #fff;
+}
+
+.key-btn.action-key {
+  background-color: transparent;
+  color: #8696a0;
+  font-size: 18px;
+}
+
+.key-btn.action-key:hover {
+  background-color: #2a3942;
+  color: #e9edef;
+}
+
+.pin-footer {
+  margin-top: 20px;
+}
+
+.pin-subnote {
+  font-size: 11px;
+  color: #8696a0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shake-animation {
+  animation: shakeKeypad 0.4s ease-in-out;
+}
+
+@keyframes shakeKeypad {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
 

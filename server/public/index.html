@@ -22,6 +22,7 @@
                     </div>
                 </div>
                 <div class="header-actions">
+                    <button id="btnLock" title="Kunci WaPro (PIN)"><i class="fa-solid fa-lock"></i></button>
                     <button id="btnNewChat" title="Chat Baru"><i class="fa-solid fa-square-plus"></i></button>
                     <button id="btnLogout" title="Putus Sesi / Keluar"><i class="fa-solid fa-arrow-right-from-bracket"></i></button>
                 </div>
@@ -160,6 +161,53 @@
             </div>
             <div class="modal-footer">
                 <button class="btn-cancel" id="btnCancelNewChat">Batal</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PIN Lock Overlay -->
+    <div class="modal-overlay pin-overlay" id="pinModal" style="display: flex;">
+        <div class="modal-card pin-card">
+            <div class="pin-header">
+                <div class="pin-icon-badge">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+                <h2 id="pinTitle">WaPro Terkunci</h2>
+                <p id="pinSubtitle">Masukkan PIN 6 digit untuk membuka:</p>
+            </div>
+
+            <div class="pin-body">
+                <!-- Pin Dots Display -->
+                <div class="pin-dots" id="pinDots">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+
+                <div id="pinErrorMessage" class="pin-error" style="display: none;"></div>
+
+                <!-- On-Screen Numeric Keypad -->
+                <div class="pin-keypad">
+                    <button class="key-btn" data-key="1">1</button>
+                    <button class="key-btn" data-key="2">2</button>
+                    <button class="key-btn" data-key="3">3</button>
+                    <button class="key-btn" data-key="4">4</button>
+                    <button class="key-btn" data-key="5">5</button>
+                    <button class="key-btn" data-key="6">6</button>
+                    <button class="key-btn" data-key="7">7</button>
+                    <button class="key-btn" data-key="8">8</button>
+                    <button class="key-btn" data-key="9">9</button>
+                    <button class="key-btn action-key" data-key="clear" title="Hapus Semua"><i class="fa-solid fa-rotate-left"></i></button>
+                    <button class="key-btn" data-key="0">0</button>
+                    <button class="key-btn action-key" data-key="backspace" title="Hapus"><i class="fa-solid fa-delete-left"></i></button>
+                </div>
+            </div>
+
+            <div class="pin-footer" id="pinFooterNote">
+                <span class="pin-subnote"><i class="fa-solid fa-keyboard"></i> Anda juga bisa langsung mengetik angka di keyboard</span>
             </div>
         </div>
     </div>

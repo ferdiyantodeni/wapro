@@ -7,6 +7,13 @@ let currentUser = null;
 let activeFilter = 'all'; // 'all', 'unread', 'group'
 let stagedAttachment = null; // { base64, mimeType, fileName }
 
+// PIN & Auth State
+let authToken = localStorage.getItem('wapro_pin_token') || '';
+let isPinSet = true;
+let currentPinInput = '';
+let setupPinFirst = '';
+let pinSetupStep = 1;
+
 // DOM Elements
 const connectionPill = document.getElementById('connectionPill');
 const statusText = document.getElementById('statusText');
@@ -33,6 +40,7 @@ const pairingCodeDisplay = document.getElementById('pairingCodeDisplay');
 const qrImage = document.getElementById('qrImage');
 const btnNewChat = document.getElementById('btnNewChat');
 const btnLogout = document.getElementById('btnLogout');
+const btnLock = document.getElementById('btnLock');
 const newChatModal = document.getElementById('newChatModal');
 const newChatPhone = document.getElementById('newChatPhone');
 const btnStartNewChat = document.getElementById('btnStartNewChat');
@@ -47,6 +55,15 @@ const attachmentFileName = document.getElementById('attachmentFileName');
 const btnCancelAttachment = document.getElementById('btnCancelAttachment');
 const btnToggleEmoji = document.getElementById('btnToggleEmoji');
 const emojiTray = document.getElementById('emojiTray');
+
+// PIN Elements
+const pinModal = document.getElementById('pinModal');
+const pinTitle = document.getElementById('pinTitle');
+const pinSubtitle = document.getElementById('pinSubtitle');
+const pinDots = document.querySelectorAll('#pinDots .dot');
+const pinErrorMessage = document.getElementById('pinErrorMessage');
+const pinCard = document.querySelector('.pin-card');
+const pinKeypadBtns = document.querySelectorAll('.key-btn');
 
 // Request Browser Notifications on Click
 if ('Notification' in window && Notification.permission === 'default') {
@@ -74,6 +91,189 @@ function playBeep() {
     } catch (e) {}
 }
 
+// Authenticated Fetch Helper
+async function authFetch(url, options = {}) {
+    options.headers = {
+        ...(options.headers || {}),
+        'X-Auth-Token': authToken
+    };
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+        lockApp();
+    }
+    return res;
+}
+
+// PIN UI Helpers
+function updatePinDots() {
+    pinDots.forEach((dot, idx) => {
+        if (idx < currentPinInput.length) {
+            dot.classList.add('filled');
+        } else {
+            dot.classList.remove('filled');
+        }
+    });
+}
+
+function shakePinCard() {
+    if (!pinCard) return;
+    pinCard.classList.remove('shake-animation');
+    void pinCard.offsetWidth; // trigger reflow
+    pinCard.classList.add('shake-animation');
+}
+
+function showPinError(msg) {
+    if (!pinErrorMessage) return;
+    pinErrorMessage.textContent = msg;
+    pinErrorMessage.style.display = 'block';
+}
+
+function clearPinError() {
+    if (!pinErrorMessage) return;
+    pinErrorMessage.textContent = '';
+    pinErrorMessage.style.display = 'none';
+}
+
+function showPinModal(hasPin = true) {
+    isPinSet = hasPin;
+    currentPinInput = '';
+    setupPinFirst = '';
+    pinSetupStep = 1;
+    clearPinError();
+    updatePinDots();
+
+    if (!hasPin) {
+        pinTitle.textContent = 'Buat PIN Keamanan';
+        pinSubtitle.textContent = 'Ketik 6 digit PIN untuk mengunci akses WaPro Anda:';
+    } else {
+        pinTitle.textContent = 'WaPro Terkunci';
+        pinSubtitle.textContent = 'Masukkan PIN 6 digit untuk membuka:';
+    }
+
+    pinModal.style.display = 'flex';
+}
+
+function handlePinDigit(digit) {
+    if (currentPinInput.length >= 6) return;
+    clearPinError();
+    currentPinInput += digit;
+    updatePinDots();
+
+    if (currentPinInput.length === 6) {
+        setTimeout(processPinSubmission, 150);
+    }
+}
+
+function handlePinBackspace() {
+    if (currentPinInput.length > 0) {
+        clearPinError();
+        currentPinInput = currentPinInput.slice(0, -1);
+        updatePinDots();
+    }
+}
+
+function handlePinClear() {
+    clearPinError();
+    currentPinInput = '';
+    updatePinDots();
+}
+
+async function processPinSubmission() {
+    if (!isPinSet) {
+        // Setup Mode (first time)
+        if (pinSetupStep === 1) {
+            setupPinFirst = currentPinInput;
+            currentPinInput = '';
+            pinSetupStep = 2;
+            updatePinDots();
+            pinTitle.textContent = 'Konfirmasi PIN';
+            pinSubtitle.textContent = 'Ketik ulang 6 digit PIN Anda:';
+            return;
+        } else if (pinSetupStep === 2) {
+            if (currentPinInput !== setupPinFirst) {
+                showPinError('PIN konfirmasi tidak cocok! Silakan coba lagi.');
+                shakePinCard();
+                currentPinInput = '';
+                setupPinFirst = '';
+                pinSetupStep = 1;
+                updatePinDots();
+                pinTitle.textContent = 'Buat PIN Keamanan';
+                pinSubtitle.textContent = 'Ketik 6 digit PIN untuk mengunci akses WaPro Anda:';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/auth/setup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: currentPinInput })
+                });
+                const data = await res.json();
+                if (data.success && data.token) {
+                    authToken = data.token;
+                    localStorage.setItem('wapro_pin_token', authToken);
+                    isPinSet = true;
+                    unlockApp();
+                } else {
+                    showPinError(data.error || 'Gagal menyimpan PIN');
+                    shakePinCard();
+                    currentPinInput = '';
+                    updatePinDots();
+                }
+            } catch (e) {
+                showPinError('Error: ' + e.message);
+                shakePinCard();
+            }
+        }
+    } else {
+        // Verification Mode
+        try {
+            const res = await fetch('/api/auth/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin: currentPinInput })
+            });
+            const data = await res.json();
+            if (data.success && data.token) {
+                authToken = data.token;
+                localStorage.setItem('wapro_pin_token', authToken);
+                unlockApp();
+            } else {
+                showPinError(data.error || 'PIN salah!');
+                shakePinCard();
+                currentPinInput = '';
+                updatePinDots();
+            }
+        } catch (e) {
+            showPinError('Error: ' + e.message);
+            shakePinCard();
+        }
+    }
+}
+
+function unlockApp() {
+    pinModal.style.display = 'none';
+    currentPinInput = '';
+    updatePinDots();
+    initWebSocket();
+}
+
+function lockApp() {
+    if (authToken) {
+        fetch('/api/auth/logout-session', {
+            method: 'POST',
+            headers: { 'X-Auth-Token': authToken }
+        }).catch(() => {});
+    }
+    authToken = '';
+    localStorage.removeItem('wapro_pin_token');
+    if (ws) {
+        try { ws.close(); } catch (e) {}
+    }
+    showPinModal(isPinSet);
+}
+
+// Status Updater
 function updateConnectionStatus(state, user) {
     connectionState = state;
     connectionPill.className = 'status-pill';
@@ -93,9 +293,18 @@ function updateConnectionStatus(state, user) {
     }
 }
 
+// WebSocket Connection
 function initWebSocket() {
+    if (!authToken) {
+        showPinModal(isPinSet);
+        return;
+    }
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+
     const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    ws = new WebSocket(protocol + location.host + '/ws');
+    ws = new WebSocket(protocol + location.host + '/ws?token=' + encodeURIComponent(authToken));
 
     ws.onopen = () => {
         console.log('Connected to WaPro WebSocket');
@@ -104,6 +313,10 @@ function initWebSocket() {
     ws.onmessage = (event) => {
         try {
             const parsed = JSON.parse(event.data);
+            if (parsed.event === 'auth_required') {
+                lockApp();
+                return;
+            }
             handleWsEvent(parsed.event, parsed.data);
         } catch (e) {
             console.error('WS Parse Error:', e);
@@ -113,7 +326,9 @@ function initWebSocket() {
     ws.onclose = () => {
         console.log('WS Disconnected. Reconnecting in 2s...');
         updateConnectionStatus('connecting');
-        setTimeout(initWebSocket, 2000);
+        if (authToken && pinModal.style.display !== 'flex') {
+            setTimeout(initWebSocket, 2000);
+        }
     };
 }
 
@@ -146,7 +361,7 @@ function handleWsEvent(evt, data) {
         if (currentChatJid === jid) {
             appendMessage(message);
             scrollToBottom();
-            fetch('/api/messages/read', {
+            authFetch('/api/messages/read', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jid })
@@ -198,54 +413,63 @@ function getAvatarInitials(name) {
 
 function renderChatList(chats) {
     const q = searchChatInput.value.toLowerCase().trim();
-    let filtered = chats.filter(c => (c.name || '').toLowerCase().includes(q) || (c.jid || '').includes(q));
+    chatListEl.innerHTML = '';
 
-    // Apply Filter Pills
+    let filtered = chats;
+
     if (activeFilter === 'unread') {
         filtered = filtered.filter(c => c.unread > 0);
     } else if (activeFilter === 'group') {
-        filtered = filtered.filter(c => c.isGroup || (c.jid && c.jid.endsWith('@g.us')));
+        filtered = filtered.filter(c => c.isGroup);
+    }
+
+    if (q) {
+        filtered = filtered.filter(c =>
+            (c.name && c.name.toLowerCase().includes(q)) ||
+            (c.lastMessage && c.lastMessage.toLowerCase().includes(q)) ||
+            c.jid.includes(q)
+        );
     }
 
     if (filtered.length === 0) {
-        chatListEl.innerHTML = '<div class="empty-state-list"><p>Tidak ada chat ditemukan</p></div>';
+        chatListEl.innerHTML = '<div class="empty-state-list"><p>' + (q ? 'Chat tidak ditemukan' : 'Belum ada chat') + '</p></div>';
         return;
     }
 
-    chatListEl.innerHTML = filtered.map(c => {
-        const isActive = c.jid === currentChatJid ? ' active' : '';
-        const initials = getAvatarInitials(c.name);
-        const unreadBadge = c.unread > 0 ? ('<span class="chat-unread-badge">' + c.unread + '</span>') : '';
-        const timeStr = formatTime(c.timestamp);
-        return '<div class="chat-item' + isActive + '" onclick="selectChat(\'' + c.jid + '\')">' +
-            '<div class="chat-item-avatar">' + initials + '</div>' +
-            '<div class="chat-item-content">' +
-                '<div class="chat-item-top">' +
-                    '<span class="chat-item-name">' + escapeHtml(c.name || c.jid.split('@')[0]) + '</span>' +
-                    '<span class="chat-item-time">' + timeStr + '</span>' +
+    filtered.forEach(chat => {
+        const item = document.createElement('div');
+        item.className = 'chat-item' + (chat.jid === currentChatJid ? ' active' : '');
+        item.onclick = () => selectChat(chat.jid);
+
+        const initials = getAvatarInitials(chat.name);
+        const unreadBadge = chat.unread > 0 ? ('<span class="unread-badge">' + chat.unread + '</span>') : '';
+        const timeStr = formatTime(chat.timestamp);
+        const groupIcon = chat.isGroup ? '<i class="fa-solid fa-users" style="margin-right: 4px; font-size: 11px; opacity: 0.7;"></i>' : '';
+
+        item.innerHTML = 
+            '<div class="chat-avatar">' + initials + '</div>' +
+            '<div class="chat-info">' +
+                '<div class="chat-info-top">' +
+                    '<span class="chat-name">' + groupIcon + escapeHtml(chat.name || chat.jid.split('@')[0]) + '</span>' +
+                    '<span class="chat-time">' + timeStr + '</span>' +
                 '</div>' +
-                '<div class="chat-item-bottom">' +
-                    '<span class="chat-item-msg">' + escapeHtml(c.lastMessage || '') + '</span>' +
+                '<div class="chat-info-bottom">' +
+                    '<span class="chat-preview">' + escapeHtml(chat.lastMessage || '') + '</span>' +
                     unreadBadge +
                 '</div>' +
-            '</div>' +
-        '</div>';
-    }).join('');
+            '</div>';
+
+        chatListEl.appendChild(item);
+    });
 }
 
 window.selectChat = async function(jid) {
     currentChatJid = jid;
     const chat = allChats.find(c => c.jid === jid);
-    const name = chat ? (chat.name || jid.split('@')[0]) : jid.split('@')[0];
 
-    if (chat && chat.unread) {
-        chat.unread = 0;
-        renderChatList(allChats);
-    }
-
-    activeAvatar.textContent = getAvatarInitials(name);
-    activeContactName.textContent = name;
-    activeContactSubtitle.textContent = jid.endsWith('@g.us') ? 'Grup WhatsApp' : jid.split('@')[0];
+    activeAvatar.textContent = getAvatarInitials(chat?.name || jid);
+    activeContactName.textContent = chat?.name || jid.split('@')[0];
+    activeContactSubtitle.textContent = chat?.isGroup ? 'Grup WhatsApp' : (jid.includes('@') ? jid.split('@')[0] : 'Online');
 
     emptyChatView.style.display = 'none';
     activeChatView.style.display = 'flex';
@@ -255,12 +479,12 @@ window.selectChat = async function(jid) {
 
     messagesContainer.innerHTML = '<div class="empty-state-list"><i class="fa-solid fa-spinner fa-spin"></i><p>Memuat pesan...</p></div>';
     try {
-        const res = await fetch('/api/messages/' + encodeURIComponent(jid));
+        const res = await authFetch('/api/messages/' + encodeURIComponent(jid));
         const messages = await res.json();
         renderMessages(messages);
         scrollToBottom();
 
-        fetch('/api/messages/read', {
+        authFetch('/api/messages/read', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ jid })
@@ -348,7 +572,7 @@ async function sendMessage() {
                 fileName: stagedAttachment.fileName
             };
             clearAttachment();
-            const res = await fetch('/api/messages/send-media', {
+            const res = await authFetch('/api/messages/send-media', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -358,7 +582,7 @@ async function sendMessage() {
                 alert('Gagal mengirim file: ' + (result.error || 'Unknown error'));
             }
         } else {
-            const res = await fetch('/api/messages/send', {
+            const res = await authFetch('/api/messages/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jid: currentChatJid, text })
@@ -473,7 +697,7 @@ btnRequestPairingCode.addEventListener('click', async () => {
     btnRequestPairingCode.disabled = true;
 
     try {
-        const res = await fetch('/api/pair', {
+        const res = await authFetch('/api/pair', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phone })
@@ -543,11 +767,65 @@ btnStartNewChat.addEventListener('click', () => {
 btnLogout.addEventListener('click', async () => {
     if (!confirm('Apakah Anda yakin ingin memutus sesi WhatsApp ini?')) return;
     try {
-        await fetch('/api/logout', { method: 'POST' });
+        await authFetch('/api/logout', { method: 'POST' });
         location.reload();
     } catch (e) {
         alert('Gagal logout: ' + e.message);
     }
 });
 
-initWebSocket();
+// Keypad & Keyboard Listeners for PIN
+pinKeypadBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const key = btn.getAttribute('data-key');
+        if (key === 'clear') handlePinClear();
+        else if (key === 'backspace') handlePinBackspace();
+        else handlePinDigit(key);
+    });
+});
+
+window.addEventListener('keydown', (e) => {
+    if (pinModal && pinModal.style.display === 'flex') {
+        if (e.key >= '0' && e.key <= '9') {
+            e.preventDefault();
+            handlePinDigit(e.key);
+        } else if (e.key === 'Backspace') {
+            e.preventDefault();
+            handlePinBackspace();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            handlePinClear();
+        }
+    }
+});
+
+if (btnLock) {
+    btnLock.addEventListener('click', lockApp);
+}
+
+// Initial Boot: Check Auth Status
+async function checkAuthAndStart() {
+    try {
+        const res = await fetch('/api/auth/status', {
+            headers: { 'X-Auth-Token': authToken }
+        });
+        const data = await res.json();
+        isPinSet = data.isPinSet;
+
+        if (!isPinSet) {
+            showPinModal(false);
+            return;
+        }
+
+        if (authToken && data.isAuthenticated) {
+            unlockApp();
+        } else {
+            showPinModal(true);
+        }
+    } catch (e) {
+        showPinModal(true);
+    }
+}
+
+checkAuthAndStart();
