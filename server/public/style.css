@@ -1128,7 +1128,8 @@ body {
 
 #btnFormatAI:hover,
 #btnInputBullet:hover,
-#btnInputNumber:hover {
+#btnInputNumber:hover,
+#btnShareContact:hover {
   color: #00a884 !important;
 }
 
@@ -1819,5 +1820,164 @@ body {
   20%, 60% { transform: translateX(-8px); }
   40%, 80% { transform: translateX(8px); }
 }
+
+/* Contact Card in Message Bubble */
+.contact-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-contact-card {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  min-width: 250px;
+  max-width: 320px;
+  margin-bottom: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.outgoing .message-contact-card {
+  background: rgba(0, 0, 0, 0.16);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.contact-card-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.contact-card-top .contact-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.contact-details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  gap: 2px;
+}
+
+.contact-details .contact-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #e9edef;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.contact-details .contact-phone {
+  font-size: 12.5px;
+  color: #8696a0;
+  font-family: monospace, sans-serif;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.contact-card-actions {
+  display: flex;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.btn-contact-action {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #00a884;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 10px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-contact-action:first-child {
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.btn-contact-action:hover {
+  background: rgba(0, 168, 132, 0.15);
+  color: #25d366;
+}
+
+.btn-contact-copy {
+  color: #8696a0;
+}
+
+.btn-contact-copy:hover {
+  color: #e9edef;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Contact Picker List in Send Contact Modal */
+.contact-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #202c33;
+  transition: background 0.15s;
+}
+
+.contact-picker-item:last-child {
+  border-bottom: none;
+}
+
+.contact-picker-item:hover {
+  background: #202c33;
+}
+
+.contact-picker-item .item-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.contact-picker-item .item-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #e9edef;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.contact-picker-item .item-phone {
+  font-size: 11.5px;
+  color: #8696a0;
+  margin-left: auto;
+  font-family: monospace, sans-serif;
+}
+
 
 

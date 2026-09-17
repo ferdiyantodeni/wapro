@@ -59,9 +59,16 @@ const btnToggleSort = document.getElementById('btnToggleSort');
 const sortIcon = document.getElementById('sortIcon');
 const sortLabel = document.getElementById('sortLabel');
 const btnAttach = document.getElementById('btnAttach');
+const btnShareContact = document.getElementById('btnShareContact');
 const btnFormatAI = document.getElementById('btnFormatAI');
 const btnInputBullet = document.getElementById('btnInputBullet');
 const btnInputNumber = document.getElementById('btnInputNumber');
+const sendContactModal = document.getElementById('sendContactModal');
+const contactInputName = document.getElementById('contactInputName');
+const contactInputPhone = document.getElementById('contactInputPhone');
+const contactPickerList = document.getElementById('contactPickerList');
+const btnCancelSendContact = document.getElementById('btnCancelSendContact');
+const btnSubmitSendContact = document.getElementById('btnSubmitSendContact');
 const fileAttachmentInput = document.getElementById('fileAttachmentInput');
 const attachmentPreviewBar = document.getElementById('attachmentPreviewBar');
 const attachmentFileName = document.getElementById('attachmentFileName');
@@ -468,6 +475,85 @@ function renderMessages(msgs) {
     msgs.forEach(m => appendMessage(m));
 }
 
+function renderContactCardHtml(contact) {
+    if (!contact) return '';
+    const name = escapeHtml(contact.name || 'Kontak');
+    const phone = escapeHtml(contact.phone || '');
+    const cleanPhone = (contact.waid || contact.phone || '').replace(/[^0-9]/g, '');
+    const jid = contact.jid || (cleanPhone ? (cleanPhone + '@s.whatsapp.net') : '');
+    const initials = getAvatarInitials(name);
+    const bgGradient = getAvatarBg(jid || name);
+
+    return '<div class="message-contact-card">' +
+        '<div class="contact-card-top">' +
+            '<div class="contact-avatar" style="background: ' + bgGradient + ';">' + initials + '</div>' +
+            '<div class="contact-details">' +
+                '<span class="contact-name" title="' + name + '">' + name + '</span>' +
+                '<span class="contact-phone">' + (phone ? phone : 'Kontak WhatsApp') + '</span>' +
+            '</div>' +
+        '</div>' +
+        '<div class="contact-card-actions">' +
+            (cleanPhone ? 
+                '<button type="button" class="btn-contact-action btn-contact-chat" onclick="openContactChat(\'' + jid + '\', \'' + name.replace(/'/g, "\\'") + '\')"><i class="fa-solid fa-comment-dots"></i> Chat</button>' +
+                '<button type="button" class="btn-contact-action btn-contact-copy" onclick="copyContactPhone(\'' + (phone || cleanPhone) + '\', event)"><i class="fa-solid fa-copy"></i> Salin</button>'
+                :
+                '<button type="button" class="btn-contact-action btn-contact-chat" onclick="searchOrStartContactChat(\'' + name.replace(/'/g, "\\'") + '\')"><i class="fa-solid fa-magnifying-glass"></i> Cari / Chat</button>' +
+                '<button type="button" class="btn-contact-action btn-contact-copy" onclick="copyContactPhone(\'' + name.replace(/'/g, "\\'") + '\', event)"><i class="fa-solid fa-copy"></i> Salin</button>'
+            ) +
+        '</div>' +
+    '</div>';
+}
+
+window.openContactChat = function(jid, name) {
+    if (!jid) return;
+    let cleanJid = jid;
+    if (!cleanJid.includes('@')) {
+        let clean = cleanJid.replace(/[^0-9]/g, '');
+        if (clean.startsWith('0')) clean = '62' + clean.slice(1);
+        cleanJid = clean + '@s.whatsapp.net';
+    }
+
+    let chat = allChats.find(c => c.jid === cleanJid);
+    if (!chat) {
+        chat = {
+            jid: cleanJid,
+            name: name || cleanJid.split('@')[0],
+            lastMessage: '',
+            timestamp: Date.now(),
+            unread: 0
+        };
+        allChats.unshift(chat);
+        renderChatList(allChats);
+    }
+    selectChat(cleanJid);
+};
+
+window.copyContactPhone = function(phone, e) {
+    if (e) e.stopPropagation();
+    if (!phone) return;
+    navigator.clipboard.writeText(phone).then(() => {
+        showToast('Nomor ' + phone + ' disalin ke clipboard 📋');
+    }).catch(() => {
+        showToast('Nomor: ' + phone);
+    });
+};
+
+window.searchOrStartContactChat = function(name) {
+    if (!name) return;
+    const q = name.toLowerCase().trim();
+    const matched = allChats.find(c => 
+        (c.name && c.name.toLowerCase().includes(q)) || 
+        c.jid.includes(q)
+    );
+    if (matched) {
+        selectChat(matched.jid);
+        return;
+    }
+    searchChatInput.value = name;
+    renderChatList(allChats);
+    showToast('Mencari kontak: ' + name);
+};
+
 function appendMessage(m) {
     if (m.id && document.querySelector('.message-bubble[data-id="' + m.id + '"]')) {
         return;
@@ -502,6 +588,21 @@ function appendMessage(m) {
     let contentHtml = '';
     if (isSticker) {
         contentHtml = '<img src="' + m.mediaBase64 + '" class="message-sticker" alt="Sticker" title="Klik untuk kirim ulang stiker" onclick="onStickerClick(\'' + m.mediaBase64 + '\')" />';
+    } else if (m.msgType === 'contact' || (m.text && m.text.startsWith('[Kontak]'))) {
+        if (Array.isArray(m.contactInfo)) {
+            contentHtml = '<div class="contact-cards-container">' + m.contactInfo.map(c => renderContactCardHtml(c)).join('') + '</div>';
+        } else if (m.contactInfo) {
+            contentHtml = renderContactCardHtml(m.contactInfo);
+        } else {
+            const rawName = (m.text || '').replace(/^\[Kontak\]\s*/, '').trim();
+            const matchedChat = allChats.find(c => c.name && c.name.toLowerCase() === rawName.toLowerCase());
+            contentHtml = renderContactCardHtml({
+                name: rawName,
+                phone: matchedChat ? ('+' + matchedChat.jid.split('@')[0]) : '',
+                waid: matchedChat ? matchedChat.jid.split('@')[0] : '',
+                jid: matchedChat ? matchedChat.jid : ''
+            });
+        }
     } else if (m.msgType === 'image' && m.mediaBase64) {
         contentHtml = '<img src="' + m.mediaBase64 + '" class="message-image" alt="Gambar" onclick="window.open(\'' + m.mediaBase64 + '\')" />' +
                       (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + renderFormattedWhatsAppText(m.text) + '</div>' : '');
@@ -1288,6 +1389,103 @@ fileAttachmentInput.addEventListener('change', (e) => {
 });
 
 btnCancelAttachment.addEventListener('click', clearAttachment);
+
+// Send Contact Modal wiring
+if (btnShareContact) {
+    btnShareContact.addEventListener('click', () => {
+        if (!currentChatJid) {
+            showToast('Pilih chat terlebih dahulu untuk mengirim kontak!');
+            return;
+        }
+        sendContactModal.style.display = 'flex';
+        contactInputName.value = '';
+        contactInputPhone.value = '';
+        renderContactPickerList();
+        contactInputName.focus();
+    });
+}
+
+if (btnCancelSendContact) {
+    btnCancelSendContact.addEventListener('click', () => {
+        sendContactModal.style.display = 'none';
+    });
+}
+
+function renderContactPickerList() {
+    if (!contactPickerList) return;
+    contactPickerList.innerHTML = '';
+
+    const directChats = (allChats || []).filter(c => c && !c.isGroup && c.jid !== currentChatJid);
+
+    if (directChats.length === 0) {
+        contactPickerList.innerHTML = '<div style="padding:12px;text-align:center;color:#8696a0;font-size:12px;">Belum ada riwayat kontak lain</div>';
+        return;
+    }
+
+    directChats.slice(0, 30).forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'contact-picker-item';
+        const dName = formatChatDisplayName(c);
+        const initials = getAvatarInitials(dName);
+        const bgGradient = getAvatarBg(c.jid || dName);
+        const phone = c.jid.includes('@') ? ('+' + c.jid.split('@')[0]) : c.jid;
+
+        item.innerHTML = 
+            '<div class="item-avatar" style="background: ' + bgGradient + ';">' + initials + '</div>' +
+            '<span class="item-name">' + escapeHtml(dName) + '</span>' +
+            '<span class="item-phone">' + escapeHtml(phone) + '</span>';
+
+        item.onclick = () => {
+            contactInputName.value = dName;
+            contactInputPhone.value = phone.replace(/^\+/, '');
+            contactInputName.focus();
+        };
+
+        contactPickerList.appendChild(item);
+    });
+}
+
+if (btnSubmitSendContact) {
+    btnSubmitSendContact.addEventListener('click', async () => {
+        const name = contactInputName.value.trim();
+        const phone = contactInputPhone.value.trim();
+        if (!name || !phone) {
+            alert('Nama kontak dan nomor HP harus diisi!');
+            return;
+        }
+
+        if (!currentChatJid) return;
+
+        btnSubmitSendContact.disabled = true;
+        btnSubmitSendContact.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Mengirim...';
+
+        try {
+            const res = await sessionFetch('/api/messages/send-contact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jid: currentChatJid,
+                    contactName: name,
+                    contactPhone: phone,
+                    quotedMsgId: activeQuotedMsg ? activeQuotedMsg.id : null
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                sendContactModal.style.display = 'none';
+                cancelReply();
+                showToast('Kontak ' + name + ' berhasil dikirim! 👤');
+            } else {
+                alert('Gagal mengirim kontak: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Error mengirim kontak: ' + e.message);
+        } finally {
+            btnSubmitSendContact.disabled = false;
+            btnSubmitSendContact.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Kirim Kontak';
+        }
+    });
+}
 
 // Cancel Reply Button
 btnCancelReply.addEventListener('click', cancelReply);

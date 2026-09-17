@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.6">
+    <link rel="stylesheet" href="style.css?v=4.7">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -133,6 +133,7 @@
                 <footer class="chat-input-bar">
                     <button class="btn-input-action" id="btnToggleEmoji" title="Emoji"><i class="fa-regular fa-face-smile"></i></button>
                     <button class="btn-input-action" id="btnAttach" title="Kirim Gambar / Dokumen"><i class="fa-solid fa-paperclip"></i></button>
+                    <button class="btn-input-action" id="btnShareContact" title="Kirim / Bagikan Kontak"><i class="fa-solid fa-address-card"></i></button>
                     <button class="btn-input-action" id="btnFormatAI" title="Rapiin Format AI (Otomatis ubah Markdown AI jadi WhatsApp)"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
                     <button class="btn-input-action" id="btnInputBullet" title="Auto Bullet pada baris yang diblok (•)"><i class="fa-solid fa-list-ul"></i></button>
                     <button class="btn-input-action" id="btnInputNumber" title="Auto Numbering pada baris yang diblok (1, 2, 3...)"><i class="fa-solid fa-list-ol"></i></button>
@@ -290,11 +291,43 @@
         </div>
     </div>
 
+    <!-- Modal Kirim Kontak -->
+    <div class="modal-overlay" id="sendContactModal" style="display: none;">
+        <div class="modal-card" style="max-width: 440px;">
+            <div class="modal-header">
+                <i class="fa-solid fa-address-card" style="font-size: 38px; color: #00a884; margin-bottom: 8px;"></i>
+                <h2>Kirim Kontak</h2>
+                <p>Bagikan kartu kontak WhatsApp ke chat ini</p>
+            </div>
+
+            <div style="padding: 0 16px 8px 16px;">
+                <div class="input-group" style="margin-bottom: 12px;">
+                    <label style="font-size: 12px; color: #8696a0; margin-bottom: 4px; display: block;">Nama Kontak</label>
+                    <input type="text" id="contactInputName" placeholder="Contoh: Budiyono Tpm Assy 2" style="width: 100%; border-radius: 8px; padding: 10px 14px; background: #202c33; border: 1px solid #3b4a54; color: #e9edef; font-size: 14px;">
+                </div>
+                <div class="input-group" style="margin-bottom: 12px;">
+                    <label style="font-size: 12px; color: #8696a0; margin-bottom: 4px; display: block;">Nomor WhatsApp / HP</label>
+                    <input type="tel" id="contactInputPhone" placeholder="Contoh: 08123456789 atau 628123456789" style="width: 100%; border-radius: 8px; padding: 10px 14px; background: #202c33; border: 1px solid #3b4a54; color: #e9edef; font-size: 14px;">
+                </div>
+
+                <div style="font-size: 12px; color: #8696a0; margin: 12px 0 6px 0; display: flex; align-items: center; justify-content: space-between;">
+                    <span><i class="fa-solid fa-user-clock"></i> Pilih dari kontak / chat sebelumnya:</span>
+                </div>
+                <div id="contactPickerList" style="max-height: 150px; overflow-y: auto; border-radius: 8px; border: 1px solid #3b4a54; background: #111b21;"></div>
+            </div>
+
+            <div class="modal-actions" style="display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid #222e35; justify-content: flex-end;">
+                <button class="btn-cancel" id="btnCancelSendContact" style="padding: 8px 16px; border-radius: 8px; background: transparent; border: 1px solid #3b4a54; color: #8696a0; cursor: pointer;">Batal</button>
+                <button class="btn-save" id="btnSubmitSendContact" style="padding: 8px 20px; border-radius: 8px; background: #00a884; border: none; color: #fff; font-weight: 600; cursor: pointer;"><i class="fa-solid fa-paper-plane"></i> Kirim Kontak</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification -->
     <div class="toast-notification" id="toastNotification" style="display: none;">
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=4.6"></script>
+    <script src="app.js?v=4.7"></script>
 </body>
 </html>

@@ -67,6 +67,43 @@ function extractMessageContent(msg) {
     return m;
 }
 
+// Helper to parse contact vCard data
+function parseVCard(displayName, vcard) {
+    let name = displayName || 'Kontak';
+    let phone = '';
+    let waid = '';
+    let org = '';
+
+    if (vcard) {
+        const fnMatch = vcard.match(/FN:(.+)/i);
+        if (fnMatch) name = fnMatch[1].trim();
+
+        const waidMatch = vcard.match(/waid=([0-9]+)/i);
+        if (waidMatch) waid = waidMatch[1].trim();
+
+        const telMatch = vcard.match(/TEL[^:]*:(.+)/i);
+        if (telMatch) phone = telMatch[1].trim();
+
+        const orgMatch = vcard.match(/ORG:(.+)/i);
+        if (orgMatch) org = orgMatch[1].trim();
+    }
+
+    if (!phone && waid) phone = '+' + waid;
+    if (!waid && phone) {
+        let clean = phone.replace(/[^0-9]/g, '');
+        if (clean.startsWith('0')) clean = '62' + clean.slice(1);
+        waid = clean;
+    }
+
+    return {
+        name,
+        phone: phone || name,
+        waid: waid || '',
+        jid: waid ? (waid + '@s.whatsapp.net') : '',
+        org: org || ''
+    };
+}
+
 // Helper to extract message text
 function extractMessageText(msg) {
     const m = extractMessageContent(msg);
@@ -78,6 +115,7 @@ function extractMessageText(msg) {
            (m.documentMessage ? ('[Dokumen] ' + (m.documentMessage.fileName || '')).trim() : '') ||
            (m.stickerMessage ? '[Stiker]' : '') ||
            (m.contactMessage ? ('[Kontak] ' + (m.contactMessage.displayName || '')).trim() : '') ||
+           (m.contactsArrayMessage ? ('[Kontak] ' + (m.contactsArrayMessage.displayName || (m.contactsArrayMessage.contacts?.[0]?.displayName ? `${m.contactsArrayMessage.contacts[0].displayName} (+${m.contactsArrayMessage.contacts.length - 1})` : ''))).trim() : '') ||
            (m.locationMessage ? '[Lokasi]' : '') ||
            '';
 }
@@ -121,6 +159,32 @@ class WhatsAppSession {
                 else this.store.lidMap = {};
                 if (saved.contacts) this.store.contacts = saved.contacts;
                 else this.store.contacts = {};
+
+                // Enrich legacy or existing [Kontak] messages with contactInfo
+                for (const msgList of Object.values(this.store.messages || {})) {
+                    for (const m of msgList) {
+                        if (!m.contactInfo && (m.msgType === 'contact' || (m.text && m.text.startsWith('[Kontak]')))) {
+                            m.msgType = 'contact';
+                            const rawName = (m.text || '').replace(/^\[Kontak\]\s*/, '').trim();
+                            let foundPhone = '';
+                            let foundJid = '';
+                            for (const [cJid, cData] of Object.entries(this.store.contacts || {})) {
+                                if (cData?.name && cData.name.toLowerCase() === rawName.toLowerCase()) {
+                                    foundJid = cJid;
+                                    foundPhone = cData.phone || (cJid.includes('@') ? ('+' + cJid.split('@')[0]) : '');
+                                    break;
+                                }
+                            }
+                            m.contactInfo = {
+                                name: rawName,
+                                phone: foundPhone || '',
+                                waid: foundJid ? foundJid.split('@')[0] : '',
+                                jid: foundJid || ''
+                            };
+                        }
+                    }
+                }
+
                 this.cleanGhostChats();
             } catch (e) {
                 console.error(`[${this.sessionId}] Error load store:`, e.message);
@@ -524,6 +588,17 @@ class WhatsAppSession {
                         const text = extractMessageText(msg);
                         if (!text) continue;
 
+                        let msgType = 'text';
+                        let contactInfo = null;
+                        const mContent = extractMessageContent(msg);
+                        if (mContent?.contactMessage) {
+                            msgType = 'contact';
+                            contactInfo = parseVCard(mContent.contactMessage.displayName, mContent.contactMessage.vcard);
+                        } else if (mContent?.contactsArrayMessage) {
+                            msgType = 'contact';
+                            contactInfo = (mContent.contactsArrayMessage.contacts || []).map(c => parseVCard(c.displayName, c.vcard));
+                        }
+
                         const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
                         const senderName = msg.pushName || jid.split('@')[0];
 
@@ -540,6 +615,8 @@ class WhatsAppSession {
                             id: msg.key.id,
                             fromMe,
                             text,
+                            msgType,
+                            contactInfo,
                             timestamp,
                             senderName,
                             status: fromMe ? 'SENT' : 'RECEIVED'
@@ -704,6 +781,7 @@ class WhatsAppSession {
                     let mediaBase64 = null;
                     let fileName = null;
                     let fileSize = null;
+                    let contactInfo = null;
 
                     if (mContent?.stickerMessage) {
                         msgType = 'sticker';
@@ -731,9 +809,36 @@ class WhatsAppSession {
                             const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
                             if (buf) mediaBase64 = 'data:' + (mContent.documentMessage.mimetype || 'application/octet-stream') + ';base64,' + buf.toString('base64');
                         } catch (e) {}
+                    } else if (mContent?.contactMessage) {
+                        msgType = 'contact';
+                        const c = mContent.contactMessage;
+                        const parsed = parseVCard(c.displayName, c.vcard);
+                        contactInfo = parsed;
+                        if (parsed.jid && parsed.name) {
+                            this.store.contacts = this.store.contacts || {};
+                            this.store.contacts[parsed.jid] = {
+                                name: parsed.name,
+                                phone: parsed.phone,
+                                notify: parsed.name
+                            };
+                        }
+                    } else if (mContent?.contactsArrayMessage) {
+                        msgType = 'contact';
+                        const contacts = mContent.contactsArrayMessage.contacts || [];
+                        contactInfo = contacts.map(c => parseVCard(c.displayName, c.vcard));
+                        this.store.contacts = this.store.contacts || {};
+                        (Array.isArray(contactInfo) ? contactInfo : []).forEach(parsed => {
+                            if (parsed.jid && parsed.name) {
+                                this.store.contacts[parsed.jid] = {
+                                    name: parsed.name,
+                                    phone: parsed.phone,
+                                    notify: parsed.name
+                                };
+                            }
+                        });
                     }
 
-                    if (!text && !mediaBase64) continue;
+                    if (!text && !mediaBase64 && !contactInfo) continue;
 
                     // Extract quoted / reply context
                     const contextInfo = mContent?.extendedTextMessage?.contextInfo ||
@@ -788,6 +893,7 @@ class WhatsAppSession {
                         mediaBase64,
                         fileName,
                         fileSize,
+                        contactInfo,
                         timestamp,
                         senderName,
                         senderJid: msg.key.participant || (fromMe ? (this.currentUser?.id ? jidNormalizedUser(this.currentUser.id) : '') : jid),
@@ -1216,6 +1322,98 @@ app.post('/api/messages/send-sticker', async (req, res) => {
         res.json({ success: true, messageId: sent.key.id });
     } catch (e) {
         console.error(`[${s.sessionId}] Error sending sticker:`, e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 5c2. Send Contact
+app.post('/api/messages/send-contact', async (req, res) => {
+    const s = req.sessionInstance;
+    let { jid, contactName, contactPhone, quotedMsgId } = req.body;
+    if (!jid || !contactName || !contactPhone) {
+        return res.status(400).json({ error: 'JID, nama kontak, dan nomor HP harus diisi' });
+    }
+
+    if (!jid.includes('@')) {
+        jid = jid.replace(/[^0-9]/g, '');
+        if (jid.startsWith('0')) jid = '62' + jid.slice(1);
+        jid = jid + '@s.whatsapp.net';
+    }
+
+    let cleanPhone = contactPhone.replace(/[^0-9]/g, '');
+    if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.slice(1);
+
+    try {
+        if (!s.sock || s.connectionState !== 'open') {
+            return res.status(503).json({ error: 'WhatsApp belum terhubung' });
+        }
+
+        const canonicalJid = await s.resolveCanonicalJid(jid);
+        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
+
+        const vcard = 'BEGIN:VCARD\n'
+                    + 'VERSION:3.0\n'
+                    + 'FN:' + contactName + '\n'
+                    + 'ORG:;\n'
+                    + 'TEL;type=CELL;type=VOICE;waid=' + cleanPhone + ':+' + cleanPhone + '\n'
+                    + 'END:VCARD';
+
+        const sent = await s.sock.sendMessage(
+            canonicalJid,
+            {
+                contacts: {
+                    displayName: contactName,
+                    contacts: [{ displayName: contactName, vcard }]
+                }
+            },
+            quotedOptions
+        );
+
+        const timestamp = Date.now();
+        const contactObj = {
+            name: contactName,
+            phone: '+' + cleanPhone,
+            waid: cleanPhone,
+            jid: cleanPhone + '@s.whatsapp.net'
+        };
+
+        if (!s.store.messages[canonicalJid]) s.store.messages[canonicalJid] = [];
+        const msgObj = {
+            id: sent.key.id,
+            fromMe: true,
+            text: '[Kontak] ' + contactName,
+            msgType: 'contact',
+            contactInfo: contactObj,
+            timestamp,
+            senderName: s.currentUser?.name || 'Saya',
+            quoted: quotedInfo,
+            status: 'SENT'
+        };
+        s.store.messages[canonicalJid].push(msgObj);
+
+        // Also cache to store.contacts
+        s.store.contacts = s.store.contacts || {};
+        s.store.contacts[contactObj.jid] = {
+            name: contactName,
+            phone: contactObj.phone,
+            notify: contactName
+        };
+
+        const isGroup = canonicalJid.endsWith('@g.us');
+        s.store.chats[canonicalJid] = {
+            jid: canonicalJid,
+            name: s.store.chats[canonicalJid]?.name || canonicalJid.split('@')[0],
+            isGroup,
+            lastMessage: '[Kontak] ' + contactName,
+            timestamp,
+            unread: 0
+        };
+
+        s.saveStore();
+        s.broadcast('new_message', { jid: canonicalJid, message: msgObj, chat: s.store.chats[canonicalJid] });
+        res.json({ success: true, messageId: sent.key.id });
+    } catch (e) {
+        console.error(`[${s.sessionId}] Error sending contact:`, e);
         res.status(500).json({ error: e.message });
     }
 });
