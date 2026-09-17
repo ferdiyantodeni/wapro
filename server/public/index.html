@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.7">
+    <link rel="stylesheet" href="style.css?v=4.8">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -323,11 +323,33 @@
         </div>
     </div>
 
+    <!-- Image Preview Lightbox Modal -->
+    <div class="image-lightbox-overlay" id="imageLightboxModal" style="display: none;">
+        <div class="lightbox-header">
+            <div class="lightbox-title">
+                <span id="lightboxSender">Gambar</span>
+                <span id="lightboxTime" class="lightbox-time"></span>
+            </div>
+            <div class="lightbox-actions">
+                <a id="btnLightboxDownload" class="btn-lightbox" href="#" download="whatsapp-image.jpg" title="Unduh Gambar">
+                    <i class="fa-solid fa-download"></i> Unduh
+                </a>
+                <button type="button" class="btn-lightbox" id="btnCloseLightbox" title="Tutup (Esc)">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+        <div class="lightbox-content" id="lightboxContent">
+            <img id="lightboxImg" src="" alt="Pratinjau Gambar">
+        </div>
+        <div class="lightbox-caption" id="lightboxCaption" style="display: none;"></div>
+    </div>
+
     <!-- Toast Notification -->
     <div class="toast-notification" id="toastNotification" style="display: none;">
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=4.7"></script>
+    <script src="app.js?v=4.8"></script>
 </body>
 </html>

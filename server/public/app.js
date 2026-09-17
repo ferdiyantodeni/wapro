@@ -69,6 +69,14 @@ const contactInputPhone = document.getElementById('contactInputPhone');
 const contactPickerList = document.getElementById('contactPickerList');
 const btnCancelSendContact = document.getElementById('btnCancelSendContact');
 const btnSubmitSendContact = document.getElementById('btnSubmitSendContact');
+const imageLightboxModal = document.getElementById('imageLightboxModal');
+const lightboxImg = document.getElementById('lightboxImg');
+const lightboxSender = document.getElementById('lightboxSender');
+const lightboxTime = document.getElementById('lightboxTime');
+const btnLightboxDownload = document.getElementById('btnLightboxDownload');
+const btnCloseLightbox = document.getElementById('btnCloseLightbox');
+const lightboxCaption = document.getElementById('lightboxCaption');
+const lightboxContent = document.getElementById('lightboxContent');
 const fileAttachmentInput = document.getElementById('fileAttachmentInput');
 const attachmentPreviewBar = document.getElementById('attachmentPreviewBar');
 const attachmentFileName = document.getElementById('attachmentFileName');
@@ -554,6 +562,47 @@ window.searchOrStartContactChat = function(name) {
     showToast('Mencari kontak: ' + name);
 };
 
+window.openImageLightbox = function(msgId) {
+    const msg = currentChatMessages.find(m => m.id === msgId);
+    if (!msg || !msg.mediaBase64) return;
+
+    lightboxImg.src = msg.mediaBase64;
+    lightboxSender.textContent = msg.fromMe ? 'Anda' : (msg.senderName || 'Foto');
+    lightboxTime.textContent = formatTime(msg.timestamp);
+
+    const fileName = msg.fileName || ('WhatsApp_Image_' + (msg.timestamp || Date.now()) + '.jpg');
+    btnLightboxDownload.href = msg.mediaBase64;
+    btnLightboxDownload.download = fileName;
+
+    if (msg.text && msg.text !== '[Gambar]') {
+        lightboxCaption.style.display = 'block';
+        lightboxCaption.innerHTML = renderFormattedWhatsAppText(msg.text);
+    } else {
+        lightboxCaption.style.display = 'none';
+        lightboxCaption.innerHTML = '';
+    }
+
+    imageLightboxModal.style.display = 'flex';
+};
+
+window.closeImageLightbox = function() {
+    if (!imageLightboxModal) return;
+    imageLightboxModal.style.display = 'none';
+    if (lightboxImg) lightboxImg.src = '';
+};
+
+window.downloadImageDirect = function(base64, e, fileName) {
+    if (e) e.stopPropagation();
+    if (!base64) return;
+    const a = document.createElement('a');
+    a.href = base64;
+    a.download = fileName || ('WhatsApp_Image_' + Date.now() + '.jpg');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Mengunduh gambar... 📥');
+};
+
 function appendMessage(m) {
     if (m.id && document.querySelector('.message-bubble[data-id="' + m.id + '"]')) {
         return;
@@ -604,8 +653,13 @@ function appendMessage(m) {
             });
         }
     } else if (m.msgType === 'image' && m.mediaBase64) {
-        contentHtml = '<img src="' + m.mediaBase64 + '" class="message-image" alt="Gambar" onclick="window.open(\'' + m.mediaBase64 + '\')" />' +
-                      (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + renderFormattedWhatsAppText(m.text) + '</div>' : '');
+        const captionHtml = (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + renderFormattedWhatsAppText(m.text) + '</div>' : '');
+        contentHtml = '<div class="message-image-container" onclick="openImageLightbox(\'' + escapeHtml(m.id) + '\')" title="Klik untuk perbesar gambar">' +
+            '<img src="' + m.mediaBase64 + '" class="message-image" alt="Gambar" />' +
+            '<button type="button" class="btn-image-quick-download" title="Unduh Gambar" onclick="downloadImageDirect(\'' + m.mediaBase64 + '\', event)">' +
+                '<i class="fa-solid fa-download"></i>' +
+            '</button>' +
+        '</div>' + captionHtml;
     } else if (m.msgType === 'audio' && m.mediaBase64) {
         contentHtml = '<audio controls class="message-audio" src="' + m.mediaBase64 + '"></audio>';
     } else if (m.msgType === 'document' && m.mediaBase64) {
@@ -1486,6 +1540,26 @@ if (btnSubmitSendContact) {
         }
     });
 }
+
+// Image Lightbox Close listeners
+if (btnCloseLightbox) {
+    btnCloseLightbox.addEventListener('click', closeImageLightbox);
+}
+
+if (lightboxContent) {
+    lightboxContent.addEventListener('click', (e) => {
+        // If clicked on backdrop area around the image, close
+        if (e.target === lightboxContent) {
+            closeImageLightbox();
+        }
+    });
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && imageLightboxModal && imageLightboxModal.style.display === 'flex') {
+        closeImageLightbox();
+    }
+});
 
 // Cancel Reply Button
 btnCancelReply.addEventListener('click', cancelReply);
