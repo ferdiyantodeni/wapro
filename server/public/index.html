@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.4">
+    <link rel="stylesheet" href="style.css?v=4.5">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -221,12 +221,67 @@
 
     <!-- Edit Message Modal -->
     <div class="modal-overlay" id="editModal" style="display: none;">
-        <div class="modal-card modal-small">
-            <h3>Edit Pesan</h3>
-            <textarea id="editMessageInput" class="edit-textarea" rows="4" placeholder="Ketik perubahan pesan..."></textarea>
-            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
-                <button class="btn-cancel" id="btnCancelEdit">Batal</button>
-                <button class="btn-primary-action" id="btnSaveEdit">Simpan</button>
+        <div class="modal-card modal-edit-large">
+            <div class="modal-edit-header">
+                <h3><i class="fa-solid fa-pen-to-square"></i> Edit Pesan</h3>
+                <button class="btn-modal-close" id="btnCloseEditModal" title="Tutup"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <!-- Edit Tools (Emoji, AI Formatter, Quick Format) -->
+            <div class="edit-toolbar">
+                <button type="button" class="btn-toolbar-tool" id="btnEditEmojiToggle" title="Buka / Tutup Pilihan Emoji">
+                    <i class="fa-regular fa-face-smile"></i> Emoji
+                </button>
+                <button type="button" class="btn-toolbar-tool" id="btnEditFormatAI" title="Rapiin Format AI (Markdown ke WhatsApp)">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Rapiin Format AI
+                </button>
+                <div class="edit-toolbar-separator"></div>
+                <button type="button" class="btn-toolbar-quick" data-wrap="*" title="Tebal (*teks*)"><b>B</b></button>
+                <button type="button" class="btn-toolbar-quick" data-wrap="_" title="Miring (_teks_)"><i>I</i></button>
+                <button type="button" class="btn-toolbar-quick" data-wrap="~" title="Coret (~teks~)"><s>S</s></button>
+                <button type="button" class="btn-toolbar-quick" data-insert="• " title="Tambah Poin Bulat (•)">• Poin</button>
+            </div>
+
+            <!-- Emoji Tray inside Edit Modal -->
+            <div class="edit-emoji-tray" id="editEmojiTray" style="display: none;">
+                <span class="edit-emoji-item">👍</span>
+                <span class="edit-emoji-item">❤️</span>
+                <span class="edit-emoji-item">😂</span>
+                <span class="edit-emoji-item">🙏</span>
+                <span class="edit-emoji-item">😊</span>
+                <span class="edit-emoji-item">🔥</span>
+                <span class="edit-emoji-item">🎉</span>
+                <span class="edit-emoji-item">✅</span>
+                <span class="edit-emoji-item">📞</span>
+                <span class="edit-emoji-item">📌</span>
+                <span class="edit-emoji-item">📅</span>
+                <span class="edit-emoji-item">⏰</span>
+                <span class="edit-emoji-item">📍</span>
+                <span class="edit-emoji-item">👉</span>
+                <span class="edit-emoji-item">💡</span>
+                <span class="edit-emoji-item">⚠️</span>
+                <span class="edit-emoji-item">📢</span>
+                <span class="edit-emoji-item">🚀</span>
+                <span class="edit-emoji-item">🤝</span>
+                <span class="edit-emoji-item">✨</span>
+                <span class="edit-emoji-item">🏢</span>
+                <span class="edit-emoji-item">👥</span>
+                <span class="edit-emoji-item">📝</span>
+                <span class="edit-emoji-item">🔗</span>
+            </div>
+
+            <textarea id="editMessageInput" class="edit-textarea-large" rows="8" placeholder="Ketik atau ubah pesan di sini..."></textarea>
+
+            <div class="modal-footer modal-edit-footer">
+                <span class="edit-time-limit-note">
+                    <i class="fa-solid fa-circle-info"></i> WhatsApp mengizinkan edit pesan dalam batas 15 menit
+                </span>
+                <div class="modal-footer-actions">
+                    <button class="btn-cancel" id="btnCancelEdit">Batal</button>
+                    <button class="btn-primary-action" id="btnSaveEdit">
+                        <i class="fa-solid fa-check"></i> Simpan Perubahan
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -236,6 +291,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=4.4"></script>
+    <script src="app.js?v=4.5"></script>
 </body>
 </html>

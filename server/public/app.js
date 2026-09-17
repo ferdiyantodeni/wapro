@@ -92,6 +92,10 @@ const forwardChatList = document.getElementById('forwardChatList');
 const btnCancelForward = document.getElementById('btnCancelForward');
 const editModal = document.getElementById('editModal');
 const editMessageInput = document.getElementById('editMessageInput');
+const btnCloseEditModal = document.getElementById('btnCloseEditModal');
+const btnEditEmojiToggle = document.getElementById('btnEditEmojiToggle');
+const editEmojiTray = document.getElementById('editEmojiTray');
+const btnEditFormatAI = document.getElementById('btnEditFormatAI');
 const btnCancelEdit = document.getElementById('btnCancelEdit');
 const btnSaveEdit = document.getElementById('btnSaveEdit');
 const toastNotification = document.getElementById('toastNotification');
@@ -699,7 +703,16 @@ if (ctxEdit) {
         editMessageInput.value = msg.text || '';
         editModal.style.display = 'flex';
         editMessageInput.dataset.editMsgId = msg.id;
+        if (editEmojiTray) editEmojiTray.style.display = 'none';
+        if (btnEditEmojiToggle) btnEditEmojiToggle.classList.remove('active');
         editMessageInput.focus();
+    };
+}
+
+if (btnCloseEditModal) {
+    btnCloseEditModal.onclick = () => {
+        editModal.style.display = 'none';
+        delete editMessageInput.dataset.editMsgId;
     };
 }
 
@@ -710,6 +723,64 @@ if (btnCancelEdit) {
     };
 }
 
+if (btnEditEmojiToggle) {
+    btnEditEmojiToggle.onclick = () => {
+        const isShown = editEmojiTray.style.display === 'flex';
+        editEmojiTray.style.display = isShown ? 'none' : 'flex';
+        btnEditEmojiToggle.classList.toggle('active', !isShown);
+    };
+}
+
+// Click on edit emoji items to insert into edit textarea
+document.querySelectorAll('.edit-emoji-item').forEach(el => {
+    el.addEventListener('click', () => {
+        const char = el.textContent;
+        const start = editMessageInput.selectionStart;
+        const end = editMessageInput.selectionEnd;
+        const val = editMessageInput.value;
+        editMessageInput.value = val.substring(0, start) + char + val.substring(end);
+        editMessageInput.selectionStart = editMessageInput.selectionEnd = start + char.length;
+        editMessageInput.focus();
+    });
+});
+
+// Quick formatting buttons in edit modal (*tebal*, _miring_, ~coret~, • poin)
+document.querySelectorAll('.btn-toolbar-quick').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const wrap = btn.dataset.wrap;
+        const insert = btn.dataset.insert;
+        const start = editMessageInput.selectionStart;
+        const end = editMessageInput.selectionEnd;
+        const val = editMessageInput.value;
+
+        if (wrap) {
+            const selected = val.substring(start, end) || 'teks';
+            const wrapped = `${wrap}${selected}${wrap}`;
+            editMessageInput.value = val.substring(0, start) + wrapped + val.substring(end);
+            editMessageInput.selectionStart = start + wrap.length;
+            editMessageInput.selectionEnd = start + wrap.length + selected.length;
+        } else if (insert) {
+            editMessageInput.value = val.substring(0, start) + insert + val.substring(end);
+            editMessageInput.selectionStart = editMessageInput.selectionEnd = start + insert.length;
+        }
+        editMessageInput.focus();
+    });
+});
+
+// AI Formatter button inside Edit Modal
+if (btnEditFormatAI) {
+    btnEditFormatAI.addEventListener('click', () => {
+        const val = editMessageInput.value;
+        if (!val || !val.trim()) {
+            showToast('Tidak ada teks untuk dirapikan!');
+            return;
+        }
+        editMessageInput.value = formatAITextToWhatsApp(val);
+        showToast('Format AI dirapikan untuk WhatsApp ✨');
+        editMessageInput.focus();
+    });
+}
+
 if (btnSaveEdit) {
     btnSaveEdit.onclick = async () => {
         const msgId = editMessageInput.dataset.editMsgId;
@@ -717,7 +788,7 @@ if (btnSaveEdit) {
         if (!msgId || !newText || !currentChatJid) return;
 
         btnSaveEdit.disabled = true;
-        btnSaveEdit.textContent = 'Menyimpan...';
+        btnSaveEdit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
 
         try {
             const res = await sessionFetch('/api/messages/edit', {
@@ -733,15 +804,15 @@ if (btnSaveEdit) {
             if (result.success) {
                 editModal.style.display = 'none';
                 delete editMessageInput.dataset.editMsgId;
-                showToast('Pesan berhasil diedit!');
+                showToast('Pesan berhasil diperbarui!');
             } else {
-                alert('Gagal mengedit pesan: ' + (result.error || 'Unknown error'));
+                alert('Gagal mengedit pesan: ' + (result.error || 'WhatsApp membatasi pengeditan pesan maksimal 15 menit setelah dikirim.'));
             }
         } catch (e) {
             alert('Gagal mengedit pesan: ' + e.message);
         } finally {
             btnSaveEdit.disabled = false;
-            btnSaveEdit.textContent = 'Simpan';
+            btnSaveEdit.innerHTML = '<i class="fa-solid fa-check"></i> Simpan Perubahan';
         }
     };
 }
