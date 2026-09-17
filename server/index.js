@@ -103,7 +103,8 @@ class WhatsAppSession {
 
         this.store = {
             chats: {},
-            messages: {}
+            messages: {},
+            lidMap: {}
         };
 
         this.loadStore();
@@ -115,6 +116,8 @@ class WhatsAppSession {
                 const saved = JSON.parse(fs.readFileSync(this.dataFile, 'utf-8'));
                 if (saved.chats) this.store.chats = saved.chats;
                 if (saved.messages) this.store.messages = saved.messages;
+                if (saved.lidMap) this.store.lidMap = saved.lidMap;
+                else this.store.lidMap = {};
             } catch (e) {
                 console.error(`[${this.sessionId}] Error load store:`, e.message);
             }
@@ -126,6 +129,157 @@ class WhatsAppSession {
             fs.writeFileSync(this.dataFile, JSON.stringify(this.store, null, 2), 'utf-8');
         } catch (e) {
             console.error(`[${this.sessionId}] Error save store:`, e.message);
+        }
+    }
+
+    // Merge two duplicate chat histories (e.g. LID into Phone Number JID)
+    mergeChats(sourceJid, targetJid) {
+        if (!sourceJid || !targetJid || sourceJid === targetJid) return;
+        console.log(`[${this.sessionId}] Merging chat ${sourceJid} -> ${targetJid}`);
+
+        const sourceMsgs = this.store.messages[sourceJid] || [];
+        if (!this.store.messages[targetJid]) this.store.messages[targetJid] = [];
+
+        for (const sm of sourceMsgs) {
+            if (!this.store.messages[targetJid].some(m => m.id === sm.id)) {
+                this.store.messages[targetJid].push(sm);
+            }
+        }
+        this.store.messages[targetJid].sort((a, b) => a.timestamp - b.timestamp);
+        delete this.store.messages[sourceJid];
+
+        const sourceChat = this.store.chats[sourceJid];
+        const targetChat = this.store.chats[targetJid];
+        if (sourceChat && targetChat) {
+            if (sourceChat.timestamp > targetChat.timestamp) {
+                targetChat.lastMessage = sourceChat.lastMessage;
+                targetChat.timestamp = sourceChat.timestamp;
+            }
+            targetChat.unread = (targetChat.unread || 0) + (sourceChat.unread || 0);
+            if (sourceChat.name && !sourceChat.name.match(/^\d+$/) && (!targetChat.name || targetChat.name.match(/^\d+$/))) {
+                targetChat.name = sourceChat.name;
+            }
+        }
+        delete this.store.chats[sourceJid];
+        this.saveStore();
+    }
+
+    // Resolve an @lid or ambiguous JID to its canonical Phone Number JID (@s.whatsapp.net)
+    async resolveCanonicalJid(rawJid, msg = null) {
+        if (!rawJid) return rawJid;
+        if (rawJid.endsWith('@g.us') || rawJid === 'status@broadcast') return rawJid;
+
+        this.store.lidMap = this.store.lidMap || {};
+
+        // 1. Check if msg.key has alternative phone JID
+        if (msg?.key) {
+            const alt = msg.key.remoteJidAlt ||
+                        (msg.key.senderPn ? (msg.key.senderPn.includes('@') ? msg.key.senderPn : `${msg.key.senderPn}@s.whatsapp.net`) : null) ||
+                        (msg.key.participantPn ? (msg.key.participantPn.includes('@') ? msg.key.participantPn : `${msg.key.participantPn}@s.whatsapp.net`) : null);
+            if (alt && alt.endsWith('@s.whatsapp.net')) {
+                this.store.lidMap[rawJid] = alt;
+                this.store.lidMap[alt] = rawJid;
+                this.mergeChats(rawJid, alt);
+                return alt;
+            }
+        }
+
+        // 2. Check cached in-memory/store mapping
+        if (this.store.lidMap[rawJid] && this.store.lidMap[rawJid].endsWith('@s.whatsapp.net')) {
+            const canonical = this.store.lidMap[rawJid];
+            this.mergeChats(rawJid, canonical);
+            return canonical;
+        }
+
+        // 3. Ask Baileys signalRepository.lidMapping if it's an @lid
+        if (rawJid.endsWith('@lid') && this.sock?.signalRepository?.lidMapping) {
+            try {
+                const pn = await this.sock.signalRepository.lidMapping.getPNForLID(rawJid);
+                if (pn) {
+                    const pnJid = pn.includes('@') ? pn : `${pn}@s.whatsapp.net`;
+                    this.store.lidMap[rawJid] = pnJid;
+                    this.store.lidMap[pnJid] = rawJid;
+                    this.mergeChats(rawJid, pnJid);
+                    return pnJid;
+                }
+            } catch (e) {}
+
+            // 4. Try scanning existing phone number chats via onWhatsApp
+            if (this.sock && this.connectionState === 'open') {
+                for (const pnJid of Object.keys(this.store.chats)) {
+                    if (pnJid.endsWith('@s.whatsapp.net')) {
+                        try {
+                            const results = await this.sock.onWhatsApp(pnJid);
+                            if (Array.isArray(results) && results[0]?.lid) {
+                                const lidKey = results[0].lid.includes('@') ? results[0].lid : `${results[0].lid}@lid`;
+                                this.store.lidMap[lidKey] = pnJid;
+                                this.store.lidMap[pnJid] = lidKey;
+                                if (lidKey === rawJid) {
+                                    this.mergeChats(rawJid, pnJid);
+                                    return pnJid;
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                }
+            }
+        }
+
+        // 5. If it's a @s.whatsapp.net, cache its LID
+        if (rawJid.endsWith('@s.whatsapp.net') && this.sock?.signalRepository?.lidMapping) {
+            try {
+                const lid = await this.sock.signalRepository.lidMapping.getLIDForPN(rawJid);
+                if (lid) {
+                    const lidKey = lid.includes('@') ? lid : `${lid}@lid`;
+                    this.store.lidMap[lidKey] = rawJid;
+                    this.store.lidMap[rawJid] = lidKey;
+                }
+            } catch (e) {}
+        }
+
+        return rawJid;
+    }
+
+    // Scan and clean up any orphaned LID chats by merging into their phone number chats
+    async cleanupAndMergeLids() {
+        if (!this.sock || this.connectionState !== 'open') return;
+        this.store.lidMap = this.store.lidMap || {};
+        let changed = false;
+
+        const chatKeys = Object.keys(this.store.chats);
+
+        // Pre-fetch LIDs for all @s.whatsapp.net chats
+        for (const cJid of chatKeys) {
+            if (cJid.endsWith('@s.whatsapp.net')) {
+                try {
+                    const results = await this.sock.onWhatsApp(cJid);
+                    if (Array.isArray(results) && results[0]?.lid) {
+                        const lidKey = results[0].lid.includes('@') ? results[0].lid : `${results[0].lid}@lid`;
+                        this.store.lidMap[lidKey] = cJid;
+                        this.store.lidMap[cJid] = lidKey;
+                    }
+                } catch (e) {}
+            }
+        }
+
+        // Now merge any @lid chat that has a phone number counterpart
+        for (const cJid of chatKeys) {
+            if (cJid.endsWith('@lid')) {
+                const targetPnJid = this.store.lidMap[cJid];
+                if (targetPnJid && targetPnJid !== cJid) {
+                    this.mergeChats(cJid, targetPnJid);
+                    changed = true;
+                }
+            }
+        }
+
+        if (changed) {
+            this.broadcast('init', {
+                sessionId: this.sessionId,
+                state: this.connectionState,
+                user: this.currentUser,
+                chats: Object.values(this.store.chats).sort((a, b) => b.timestamp - a.timestamp)
+            });
         }
     }
 
@@ -217,6 +371,10 @@ class WhatsAppSession {
                     };
                     this.broadcast('connection', { state: 'open', user: this.currentUser });
                     this.isStarting = false;
+
+                    setTimeout(() => {
+                        this.cleanupAndMergeLids();
+                    }, 2500);
                 }
             });
 
@@ -225,6 +383,13 @@ class WhatsAppSession {
                 if (contacts) {
                     for (const contact of contacts) {
                         const jid = contact.id;
+                        if (jid && contact.lid) {
+                            const pnJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+                            const lidJid = contact.lid.includes('@') ? contact.lid : `${contact.lid}@lid`;
+                            this.store.lidMap = this.store.lidMap || {};
+                            this.store.lidMap[lidJid] = pnJid;
+                            this.store.lidMap[pnJid] = lidJid;
+                        }
                         if (jid && (contact.name || contact.notify)) {
                             const cName = contact.name || contact.notify;
                             if (this.store.chats[jid]) {
@@ -319,6 +484,44 @@ class WhatsAppSession {
                 });
             });
 
+            this.sock.ev.on('contacts.upsert', async (contacts) => {
+                this.store.lidMap = this.store.lidMap || {};
+                for (const c of contacts) {
+                    if (c.id && c.lid) {
+                        const pnJid = c.id.includes('@') ? c.id : `${c.id}@s.whatsapp.net`;
+                        const lidJid = c.lid.includes('@') ? c.lid : `${c.lid}@lid`;
+                        this.store.lidMap[lidJid] = pnJid;
+                        this.store.lidMap[pnJid] = lidJid;
+                    }
+                    if (c.id && (c.name || c.notify)) {
+                        const name = c.name || c.notify;
+                        if (this.store.chats[c.id]) {
+                            this.store.chats[c.id].name = name;
+                        }
+                    }
+                }
+                await this.cleanupAndMergeLids();
+            });
+
+            this.sock.ev.on('contacts.update', async (updates) => {
+                this.store.lidMap = this.store.lidMap || {};
+                for (const c of updates) {
+                    if (c.id && c.lid) {
+                        const pnJid = c.id.includes('@') ? c.id : `${c.id}@s.whatsapp.net`;
+                        const lidJid = c.lid.includes('@') ? c.lid : `${c.lid}@lid`;
+                        this.store.lidMap[lidJid] = pnJid;
+                        this.store.lidMap[pnJid] = lidJid;
+                    }
+                    if (c.id && (c.name || c.notify)) {
+                        const name = c.name || c.notify;
+                        if (this.store.chats[c.id]) {
+                            this.store.chats[c.id].name = name;
+                        }
+                    }
+                }
+                await this.cleanupAndMergeLids();
+            });
+
             // Listen for message status updates (e.g. read receipts / centang biru)
             this.sock.ev.on('messages.update', async (updates) => {
                 for (const update of updates) {
@@ -352,9 +555,9 @@ class WhatsAppSession {
             this.sock.ev.on('messages.upsert', async ({ messages }) => {
                 for (const msg of messages) {
                     if (!msg.message) continue;
-                    if (msg.key.remoteJid === 'status@broadcast') continue;
-
-                    const jid = msg.key.remoteJid;
+                    const rawJid = msg.key.remoteJid;
+                    if (!rawJid || rawJid === 'status@broadcast') continue;
+                    const jid = await this.resolveCanonicalJid(rawJid, msg);
                     const fromMe = Boolean(msg.key.fromMe);
                     const mContent = extractMessageContent(msg);
                     const text = extractMessageText(msg);
@@ -430,6 +633,7 @@ class WhatsAppSession {
                     if (!this.store.messages[jid]) this.store.messages[jid] = [];
                     const msgObj = {
                         id: msg.key.id,
+                        remoteJid: rawJid,
                         fromMe,
                         text,
                         msgType,
@@ -611,29 +815,40 @@ app.post('/api/pair', async (req, res) => {
 });
 
 // 3. Get Chat List
-app.get('/api/chats', (req, res) => {
+app.get('/api/chats', async (req, res) => {
     const s = req.sessionInstance;
+    await s.cleanupAndMergeLids();
     const list = Object.values(s.store.chats).sort((a, b) => b.timestamp - a.timestamp);
     res.json(list);
 });
 
 // 4. Get Messages for a JID
-app.get('/api/messages/:jid', (req, res) => {
+app.get('/api/messages/:jid', async (req, res) => {
     const s = req.sessionInstance;
-    const msgs = s.store.messages[req.params.jid] || [];
+    let jid = req.params.jid;
+    const canonicalJid = await s.resolveCanonicalJid(jid);
+    if (canonicalJid !== jid && s.store.chats[jid]) {
+        s.mergeChats(jid, canonicalJid);
+    }
+    const msgs = s.store.messages[canonicalJid] || [];
     res.json(msgs);
 });
 
 // Helper to build quoted message payload for Baileys
 function buildQuotedOptions(s, jid, quotedMsgId) {
-    if (!quotedMsgId || !s.store.messages[jid]) return { quotedOptions: undefined, quotedInfo: null };
-    const qMsg = s.store.messages[jid].find(m => m.id === quotedMsgId);
+    if (!quotedMsgId) return { quotedOptions: undefined, quotedInfo: null };
+    const altJid = s.store.lidMap ? s.store.lidMap[jid] : null;
+    let msgs = s.store.messages[jid] || [];
+    if (altJid && s.store.messages[altJid]) {
+        msgs = [...msgs, ...s.store.messages[altJid]];
+    }
+    const qMsg = msgs.find(m => m.id === quotedMsgId);
     if (!qMsg) return { quotedOptions: undefined, quotedInfo: null };
 
     const quotedOptions = {
         quoted: {
             key: {
-                remoteJid: jid,
+                remoteJid: qMsg.remoteJid || jid,
                 fromMe: Boolean(qMsg.fromMe),
                 id: qMsg.id,
                 participant: jid.endsWith('@g.us') ? (qMsg.participantJid || qMsg.senderJid || undefined) : undefined
@@ -670,11 +885,21 @@ app.post('/api/messages/send', async (req, res) => {
             return res.status(503).json({ error: 'WhatsApp belum terhubung' });
         }
 
-        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, jid, quotedMsgId);
+        const canonicalJid = await s.resolveCanonicalJid(jid);
+        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
         const sent = await s.sock.sendMessage(jid, { text }, quotedOptions);
         const timestamp = Date.now();
 
-        if (!s.store.messages[jid]) s.store.messages[jid] = [];
+        try {
+            const lid = await s.sock.signalRepository?.lidMapping?.getLIDForPN(canonicalJid);
+            if (lid) {
+                const lidKey = lid.includes('@') ? lid : `${lid}@lid`;
+                s.store.lidMap[lidKey] = canonicalJid;
+                s.store.lidMap[canonicalJid] = lidKey;
+            }
+        } catch (e) {}
+
+        if (!s.store.messages[canonicalJid]) s.store.messages[canonicalJid] = [];
         const msgObj = {
             id: sent.key.id,
             fromMe: true,
@@ -684,13 +909,13 @@ app.post('/api/messages/send', async (req, res) => {
             quoted: quotedInfo,
             status: 'SENT'
         };
-        s.store.messages[jid].push(msgObj);
+        s.store.messages[canonicalJid].push(msgObj);
 
-        const isGroup = jid.endsWith('@g.us');
-        const defaultName = jid.split('@')[0];
-        s.store.chats[jid] = {
-            jid,
-            name: s.store.chats[jid]?.name || defaultName,
+        const isGroup = canonicalJid.endsWith('@g.us');
+        const defaultName = canonicalJid.split('@')[0];
+        s.store.chats[canonicalJid] = {
+            jid: canonicalJid,
+            name: s.store.chats[canonicalJid]?.name || defaultName,
             isGroup,
             lastMessage: text,
             timestamp,
@@ -699,9 +924,9 @@ app.post('/api/messages/send', async (req, res) => {
 
         s.saveStore();
         s.broadcast('new_message', {
-            jid,
+            jid: canonicalJid,
             message: msgObj,
-            chat: s.store.chats[jid]
+            chat: s.store.chats[canonicalJid]
         });
 
         res.json({ success: true, messageId: sent.key.id });
@@ -730,7 +955,8 @@ app.post('/api/messages/send-media', async (req, res) => {
 
         const dataPart = base64.includes(',') ? base64.split(',')[1] : base64;
         const buffer = Buffer.from(dataPart, 'base64');
-        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, jid, quotedMsgId);
+        const canonicalJid = await s.resolveCanonicalJid(jid);
+        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
         let sent;
         let msgType = 'document';
 
@@ -755,10 +981,10 @@ app.post('/api/messages/send-media', async (req, res) => {
         const msgObj = {
             id: sent.key.id,
             fromMe: true,
-            text: caption || fileName || (msgType === 'image' ? '[Gambar]' : '[File]'),
+            text: caption || (msgType === 'image' ? '[Gambar]' : (msgType === 'audio' ? '[Audio]' : (msgType === 'video' ? '[Video]' : '[Dokumen]'))),
             msgType,
             mediaBase64: base64,
-            fileName: fileName || '',
+            fileName,
             fileSize: (buffer.length / 1024).toFixed(1) + ' KB',
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
@@ -766,13 +992,13 @@ app.post('/api/messages/send-media', async (req, res) => {
             status: 'SENT'
         };
 
-        if (!s.store.messages[jid]) s.store.messages[jid] = [];
-        s.store.messages[jid].push(msgObj);
+        if (!s.store.messages[canonicalJid]) s.store.messages[canonicalJid] = [];
+        s.store.messages[canonicalJid].push(msgObj);
 
-        const isGroup = jid.endsWith('@g.us');
-        s.store.chats[jid] = {
-            jid,
-            name: s.store.chats[jid]?.name || jid.split('@')[0],
+        const isGroup = canonicalJid.endsWith('@g.us');
+        s.store.chats[canonicalJid] = {
+            jid: canonicalJid,
+            name: s.store.chats[canonicalJid]?.name || canonicalJid.split('@')[0],
             isGroup,
             lastMessage: msgObj.text,
             timestamp,
@@ -780,7 +1006,7 @@ app.post('/api/messages/send-media', async (req, res) => {
         };
 
         s.saveStore();
-        s.broadcast('new_message', { jid, message: msgObj, chat: s.store.chats[jid] });
+        s.broadcast('new_message', { jid: canonicalJid, message: msgObj, chat: s.store.chats[canonicalJid] });
         res.json({ success: true, messageId: sent.key.id });
     } catch (e) {
         console.error(`[${s.sessionId}] Error sending media:`, e);
@@ -807,12 +1033,13 @@ app.post('/api/messages/send-sticker', async (req, res) => {
 
         const dataPart = base64.includes(',') ? base64.split(',')[1] : base64;
         const buffer = Buffer.from(dataPart, 'base64');
-        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, jid, quotedMsgId);
+        const canonicalJid = await s.resolveCanonicalJid(jid);
+        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
 
         const sent = await s.sock.sendMessage(jid, { sticker: buffer }, quotedOptions);
         const timestamp = Date.now();
 
-        if (!s.store.messages[jid]) s.store.messages[jid] = [];
+        if (!s.store.messages[canonicalJid]) s.store.messages[canonicalJid] = [];
         const msgObj = {
             id: sent.key.id,
             fromMe: true,
@@ -824,12 +1051,12 @@ app.post('/api/messages/send-sticker', async (req, res) => {
             quoted: quotedInfo,
             status: 'SENT'
         };
-        s.store.messages[jid].push(msgObj);
+        s.store.messages[canonicalJid].push(msgObj);
 
-        const isGroup = jid.endsWith('@g.us');
-        s.store.chats[jid] = {
-            jid,
-            name: s.store.chats[jid]?.name || jid.split('@')[0],
+        const isGroup = canonicalJid.endsWith('@g.us');
+        s.store.chats[canonicalJid] = {
+            jid: canonicalJid,
+            name: s.store.chats[canonicalJid]?.name || canonicalJid.split('@')[0],
             isGroup,
             lastMessage: '[Stiker]',
             timestamp,
@@ -837,7 +1064,7 @@ app.post('/api/messages/send-sticker', async (req, res) => {
         };
 
         s.saveStore();
-        s.broadcast('new_message', { jid, message: msgObj, chat: s.store.chats[jid] });
+        s.broadcast('new_message', { jid: canonicalJid, message: msgObj, chat: s.store.chats[canonicalJid] });
         res.json({ success: true, messageId: sent.key.id });
     } catch (e) {
         console.error(`[${s.sessionId}] Error sending sticker:`, e);
@@ -939,18 +1166,24 @@ app.post('/api/messages/read', async (req, res) => {
     const { jid } = req.body;
     if (!jid) return res.json({ success: false });
 
-    if (s.store.chats[jid]) {
-        s.store.chats[jid].unread = 0;
-        s.saveStore();
-        s.broadcast('chat_updated', s.store.chats[jid]);
-    }
+    const canonicalJid = await s.resolveCanonicalJid(jid);
+    const altJid = s.store.lidMap ? s.store.lidMap[canonicalJid] : null;
+
+    if (s.store.chats[canonicalJid]) s.store.chats[canonicalJid].unread = 0;
+    if (altJid && s.store.chats[altJid]) s.store.chats[altJid].unread = 0;
+    s.saveStore();
+    if (s.store.chats[canonicalJid]) s.broadcast('chat_updated', s.store.chats[canonicalJid]);
 
     try {
-        if (s.sock && s.connectionState === 'open' && s.store.messages[jid]) {
-            const unreadMsgs = s.store.messages[jid].filter(m => !m.fromMe && m.status !== 'READ');
+        if (s.sock && s.connectionState === 'open') {
+            const msgsToCheck = [
+                ...(s.store.messages[canonicalJid] || []),
+                ...(altJid && s.store.messages[altJid] ? s.store.messages[altJid] : [])
+            ];
+            const unreadMsgs = msgsToCheck.filter(m => !m.fromMe && m.status !== 'READ');
             if (unreadMsgs.length > 0) {
                 const keys = unreadMsgs.map(m => ({
-                    remoteJid: jid,
+                    remoteJid: m.remoteJid || canonicalJid,
                     id: m.id,
                     participant: m.participantJid || undefined
                 }));
