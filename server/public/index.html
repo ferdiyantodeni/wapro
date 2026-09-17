@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.3">
+    <link rel="stylesheet" href="style.css?v=4.4">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -133,9 +133,10 @@
                 <footer class="chat-input-bar">
                     <button class="btn-input-action" id="btnToggleEmoji" title="Emoji"><i class="fa-regular fa-face-smile"></i></button>
                     <button class="btn-input-action" id="btnAttach" title="Kirim Gambar / Dokumen"><i class="fa-solid fa-paperclip"></i></button>
+                    <button class="btn-input-action" id="btnFormatAI" title="Rapiin Format AI (Otomatis ubah Markdown AI jadi WhatsApp)"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
                     <input type="file" id="fileAttachmentInput" style="display: none;">
-                    <input type="text" id="messageInput" placeholder="Ketik pesan atau tekan Ctrl+V untuk tempel gambar..." autocomplete="off">
-                    <button id="btnSendMessage" title="Kirim"><i class="fa-solid fa-paper-plane"></i></button>
+                    <textarea id="messageInput" rows="1" placeholder="Ketik pesan atau copas dari AI... (Shift+Enter untuk baris baru)" autocomplete="off"></textarea>
+                    <button id="btnSendMessage" title="Kirim Pesan (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
                 </footer>
             </div>
         </main>
@@ -235,6 +236,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=4.3"></script>
+    <script src="app.js?v=4.4"></script>
 </body>
 </html>

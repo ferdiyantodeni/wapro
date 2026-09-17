@@ -59,6 +59,7 @@ const btnToggleSort = document.getElementById('btnToggleSort');
 const sortIcon = document.getElementById('sortIcon');
 const sortLabel = document.getElementById('sortLabel');
 const btnAttach = document.getElementById('btnAttach');
+const btnFormatAI = document.getElementById('btnFormatAI');
 const fileAttachmentInput = document.getElementById('fileAttachmentInput');
 const attachmentPreviewBar = document.getElementById('attachmentPreviewBar');
 const attachmentFileName = document.getElementById('attachmentFileName');
@@ -214,7 +215,7 @@ function handleWsEvent(evt, data) {
             const bubble = document.querySelector('.message-bubble[data-id="' + id + '"]');
             if (bubble) {
                 const textEl = bubble.querySelector('.message-text');
-                if (textEl) textEl.innerHTML = escapeHtml(text);
+                if (textEl) textEl.innerHTML = renderFormattedWhatsAppText(text);
                 const timeEl = bubble.querySelector('.message-time');
                 if (timeEl && !bubble.querySelector('.message-edited-badge')) {
                     const badge = document.createElement('span');
@@ -497,7 +498,7 @@ function appendMessage(m) {
         contentHtml = '<img src="' + m.mediaBase64 + '" class="message-sticker" alt="Sticker" title="Klik untuk kirim ulang stiker" onclick="onStickerClick(\'' + m.mediaBase64 + '\')" />';
     } else if (m.msgType === 'image' && m.mediaBase64) {
         contentHtml = '<img src="' + m.mediaBase64 + '" class="message-image" alt="Gambar" onclick="window.open(\'' + m.mediaBase64 + '\')" />' +
-                      (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + escapeHtml(m.text) + '</div>' : '');
+                      (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + renderFormattedWhatsAppText(m.text) + '</div>' : '');
     } else if (m.msgType === 'audio' && m.mediaBase64) {
         contentHtml = '<audio controls class="message-audio" src="' + m.mediaBase64 + '"></audio>';
     } else if (m.msgType === 'document' && m.mediaBase64) {
@@ -510,7 +511,7 @@ function appendMessage(m) {
             '<i class="fa-solid fa-download" style="margin-left:auto; color:#8696a0;"></i>' +
         '</a>';
     } else {
-        contentHtml = '<div class="message-text">' + escapeHtml(m.text || '') + '</div>';
+        contentHtml = '<div class="message-text">' + renderFormattedWhatsAppText(m.text || '') + '</div>';
     }
 
     bubble.innerHTML = dropdownBtnHtml +
@@ -912,6 +913,7 @@ async function sendMessage() {
     cancelReply();
 
     messageInput.value = '';
+    autoResizeTextarea();
     messageInput.focus();
 
     try {
@@ -1003,6 +1005,72 @@ function escapeHtml(str) {
               .replace(/>/g, '&gt;')
               .replace(/"/g, '&quot;')
               .replace(/'/g, '&#039;');
+}
+
+// Smart AI Markdown to WhatsApp Formatter
+function formatAITextToWhatsApp(text) {
+    if (!text) return '';
+    let res = text;
+
+    // 1. Normalize line endings (CRLF -> LF)
+    res = res.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    // 2. Convert standard markdown headers (# Header, ## Header, ### Header) into *Header*
+    res = res.replace(/^#{1,6}\s*(.+)$/gm, (match, title) => {
+        const clean = title.trim();
+        return `*${clean}*`;
+    });
+
+    // 3. Convert double asterisks **bold** and double underscores __bold__ to WhatsApp single asterisk *bold*
+    res = res.replace(/\*\*([^*\n]+)\*\*/g, '*$1*');
+    res = res.replace(/__([^_\n]+)__/g, '*$1*');
+
+    // 4. Convert markdown list bullets (* item, - item, + item) to bullet points (• item)
+    res = res.replace(/^[\t ]*[-*+]\s+/gm, '• ');
+
+    // 5. Convert markdown strikethrough (~~text~~) to WhatsApp (~text~)
+    res = res.replace(/~~([^~\n]+)~~/g, '~$1~');
+
+    // 6. Clean up excessive empty lines (more than 2 consecutive newlines reduced to 2)
+    res = res.replace(/\n{3,}/g, '\n\n');
+
+    return res.trim();
+}
+
+// Rich WhatsApp Text Formatter for message bubbles
+function renderFormattedWhatsAppText(rawText) {
+    if (!rawText) return '';
+
+    // First, escape HTML to prevent XSS
+    let text = escapeHtml(rawText);
+
+    // 1. Code blocks: ```code```
+    text = text.replace(/```([\s\S]*?)```/g, '<code class="wa-code-block">$1</code>');
+
+    // 2. Inline code: `code`
+    text = text.replace(/`([^`\n]+)`/g, '<code class="wa-code-inline">$1</code>');
+
+    // 3. Bold: *bold* (WhatsApp rule: asterisk adjacent to non-space)
+    text = text.replace(/(^|[\s(])\*([^\s*][^*]*?[^\s*]|[^\s*])\*(?=[\s).,!?:]|$)/g, '$1<b>$2</b>');
+
+    // 4. Italic: _italic_
+    text = text.replace(/(^|[\s(])_([^\s_][^_]*?[^\s_]|[^\s_])_(?=[\s).,!?:]|$)/g, '$1<i>$2</i>');
+
+    // 5. Strikethrough: ~strike~
+    text = text.replace(/(^|[\s(])~([^\s~][^~]*?[^\s~]|[^\s~])~(?=[\s).,!?:]|$)/g, '$1<s>$2</s>');
+
+    // 6. Autolink URLs: http:// or https://
+    text = text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+
+    return text;
+}
+
+// Auto-resize textarea to fit multi-line content
+function autoResizeTextarea() {
+    if (!messageInput) return;
+    messageInput.style.height = 'auto';
+    const newHeight = Math.min(messageInput.scrollHeight, 140);
+    messageInput.style.height = (newHeight > 40 ? newHeight : 40) + 'px';
 }
 
 // Paste Handler (Ctrl + V for screenshots / images)
@@ -1117,12 +1185,68 @@ if (btnToggleSort) {
 searchChatInput.addEventListener('input', () => renderChatList(allChats));
 btnSendMessage.addEventListener('click', sendMessage);
 
+messageInput.addEventListener('input', autoResizeTextarea);
+
 messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
     }
+    // Shortcut Ctrl+Shift+F to format AI text
+    if (e.ctrlKey && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault();
+        if (btnFormatAI) btnFormatAI.click();
+    }
 });
+
+// Smart AI Paste: automatically converts Markdown from ChatGPT/Claude/Gemini to clean WhatsApp format
+messageInput.addEventListener('paste', (e) => {
+    const clipboardData = e.clipboardData || window.clipboardData;
+    if (!clipboardData) return;
+
+    // Skip if pasted item is an image file (handled by window.paste)
+    const items = clipboardData.items;
+    if (items) {
+        for (const it of items) {
+            if (it.kind === 'file') return;
+        }
+    }
+
+    const pastedText = clipboardData.getData('text');
+    if (!pastedText) return;
+
+    // Detect markdown or AI formatting
+    const hasAIMarkdown = /\*\*|#{1,6}\s+|^[\t ]*[-*+]\s+|~~/m.test(pastedText);
+    if (hasAIMarkdown) {
+        e.preventDefault();
+        const formatted = formatAITextToWhatsApp(pastedText);
+
+        const start = messageInput.selectionStart;
+        const end = messageInput.selectionEnd;
+        const val = messageInput.value;
+        messageInput.value = val.substring(0, start) + formatted + val.substring(end);
+        messageInput.selectionStart = messageInput.selectionEnd = start + formatted.length;
+
+        autoResizeTextarea();
+        showToast('Format AI dirapikan otomatis untuk WhatsApp ✨');
+    } else {
+        setTimeout(autoResizeTextarea, 10);
+    }
+});
+
+// Manual Magic Wand Click to reformat existing text
+if (btnFormatAI) {
+    btnFormatAI.addEventListener('click', () => {
+        const val = messageInput.value;
+        if (!val || !val.trim()) {
+            showToast('Ketik atau copas teks AI dulu di kolom chat!');
+            return;
+        }
+        messageInput.value = formatAITextToWhatsApp(val);
+        autoResizeTextarea();
+        showToast('Teks berhasil dirapikan untuk WhatsApp ✨');
+    });
+}
 
 btnRequestPairingCode.addEventListener('click', async () => {
     const phone = inputPhoneNumber.value.trim();
