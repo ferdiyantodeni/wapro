@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.5">
+    <link rel="stylesheet" href="style.css?v=4.6">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -134,6 +134,8 @@
                     <button class="btn-input-action" id="btnToggleEmoji" title="Emoji"><i class="fa-regular fa-face-smile"></i></button>
                     <button class="btn-input-action" id="btnAttach" title="Kirim Gambar / Dokumen"><i class="fa-solid fa-paperclip"></i></button>
                     <button class="btn-input-action" id="btnFormatAI" title="Rapiin Format AI (Otomatis ubah Markdown AI jadi WhatsApp)"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+                    <button class="btn-input-action" id="btnInputBullet" title="Auto Bullet pada baris yang diblok (•)"><i class="fa-solid fa-list-ul"></i></button>
+                    <button class="btn-input-action" id="btnInputNumber" title="Auto Numbering pada baris yang diblok (1, 2, 3...)"><i class="fa-solid fa-list-ol"></i></button>
                     <input type="file" id="fileAttachmentInput" style="display: none;">
                     <textarea id="messageInput" rows="1" placeholder="Ketik pesan atau copas dari AI... (Shift+Enter untuk baris baru)" autocomplete="off"></textarea>
                     <button id="btnSendMessage" title="Kirim Pesan (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
@@ -239,7 +241,9 @@
                 <button type="button" class="btn-toolbar-quick" data-wrap="*" title="Tebal (*teks*)"><b>B</b></button>
                 <button type="button" class="btn-toolbar-quick" data-wrap="_" title="Miring (_teks_)"><i>I</i></button>
                 <button type="button" class="btn-toolbar-quick" data-wrap="~" title="Coret (~teks~)"><s>S</s></button>
-                <button type="button" class="btn-toolbar-quick" data-insert="• " title="Tambah Poin Bulat (•)">• Poin</button>
+                <div class="edit-toolbar-separator"></div>
+                <button type="button" class="btn-toolbar-quick btn-toolbar-list" data-list="bullet" title="Format Blok: Auto Bullet (•)"><i class="fa-solid fa-list-ul"></i> Bullet</button>
+                <button type="button" class="btn-toolbar-quick btn-toolbar-list" data-list="number" title="Format Blok: Auto Numbering (1, 2, 3...)"><i class="fa-solid fa-list-ol"></i> Nomor</button>
             </div>
 
             <!-- Emoji Tray inside Edit Modal -->
@@ -291,6 +295,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=4.5"></script>
+    <script src="app.js?v=4.6"></script>
 </body>
 </html>

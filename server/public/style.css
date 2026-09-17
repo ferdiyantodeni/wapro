@@ -831,10 +831,12 @@ body {
   border-color: #00a884;
 }
 
-.btn-toolbar-quick[data-insert] {
+.btn-toolbar-quick.btn-toolbar-list {
   width: auto;
   padding: 0 10px;
   font-size: 12px;
+  gap: 6px;
+  font-weight: 500;
 }
 
 /* Edit Emoji Tray */
@@ -1124,7 +1126,9 @@ body {
   color: #e9edef !important;
 }
 
-#btnFormatAI:hover {
+#btnFormatAI:hover,
+#btnInputBullet:hover,
+#btnInputNumber:hover {
   color: #00a884 !important;
 }
 

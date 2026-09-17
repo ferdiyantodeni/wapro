@@ -60,6 +60,8 @@ const sortIcon = document.getElementById('sortIcon');
 const sortLabel = document.getElementById('sortLabel');
 const btnAttach = document.getElementById('btnAttach');
 const btnFormatAI = document.getElementById('btnFormatAI');
+const btnInputBullet = document.getElementById('btnInputBullet');
+const btnInputNumber = document.getElementById('btnInputNumber');
 const fileAttachmentInput = document.getElementById('fileAttachmentInput');
 const attachmentPreviewBar = document.getElementById('attachmentPreviewBar');
 const attachmentFileName = document.getElementById('attachmentFileName');
@@ -744,9 +746,15 @@ document.querySelectorAll('.edit-emoji-item').forEach(el => {
     });
 });
 
-// Quick formatting buttons in edit modal (*tebal*, _miring_, ~coret~, • poin)
+// Quick formatting buttons in edit modal (*tebal*, _miring_, ~coret~, • poin, bullet, number)
 document.querySelectorAll('.btn-toolbar-quick').forEach(btn => {
     btn.addEventListener('click', () => {
+        const list = btn.dataset.list;
+        if (list) {
+            applyListFormatting(editMessageInput, list);
+            return;
+        }
+
         const wrap = btn.dataset.wrap;
         const insert = btn.dataset.insert;
         const start = editMessageInput.selectionStart;
@@ -766,6 +774,18 @@ document.querySelectorAll('.btn-toolbar-quick').forEach(btn => {
         editMessageInput.focus();
     });
 });
+
+// Auto-list continuation on Enter in editMessageInput
+if (editMessageInput) {
+    editMessageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.ctrlKey) {
+            handleListEnter(editMessageInput, e);
+        } else if (e.key === 'Enter' && e.ctrlKey) {
+            e.preventDefault();
+            if (btnSaveEdit) btnSaveEdit.click();
+        }
+    });
+}
 
 // AI Formatter button inside Edit Modal
 if (btnEditFormatAI) {
@@ -1108,6 +1128,105 @@ function formatAITextToWhatsApp(text) {
     return res.trim();
 }
 
+// Auto Bullet & Numbering for Blocked Selection or Current Line
+function applyListFormatting(textarea, type) {
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const val = textarea.value;
+
+    // Expand to line boundaries
+    const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = val.indexOf('\n', end);
+    if (lineEnd === -1) lineEnd = val.length;
+
+    const block = val.substring(lineStart, lineEnd);
+    const lines = block.split('\n');
+
+    let newLines = [];
+    if (type === 'bullet') {
+        // If all non-empty lines already have '• ', toggle off
+        const nonEmpty = lines.filter(l => l.trim().length > 0);
+        const allBullet = nonEmpty.length > 0 && nonEmpty.every(l => /^\s*•\s*/.test(l));
+        if (allBullet) {
+            newLines = lines.map(line => line.replace(/^(\s*)•\s*/, '$1'));
+        } else {
+            newLines = lines.map(line => {
+                if (!line.trim() && lines.length > 1) return line;
+                const stripped = line.replace(/^(\s*)(\d+\.\s*|[-*+]\s*|•\s*)/, '$1');
+                return stripped.replace(/^(\s*)(.*)$/, '$1• $2');
+            });
+        }
+    } else if (type === 'number') {
+        // If all non-empty lines already have numbering, toggle off
+        const nonEmpty = lines.filter(l => l.trim().length > 0);
+        const allNumber = nonEmpty.length > 0 && nonEmpty.every(l => /^\s*\d+\.\s*/.test(l));
+        if (allNumber) {
+            newLines = lines.map(line => line.replace(/^(\s*)\d+\.\s*/, '$1'));
+        } else {
+            let counter = 1;
+            newLines = lines.map(line => {
+                if (!line.trim() && lines.length > 1) return line;
+                const stripped = line.replace(/^(\s*)(\d+\.\s*|[-*+]\s*|•\s*)/, '$1');
+                const num = counter++;
+                return stripped.replace(/^(\s*)(.*)$/, `$1${num}. $2`);
+            });
+        }
+    }
+
+    const newBlock = newLines.join('\n');
+    textarea.value = val.substring(0, lineStart) + newBlock + val.substring(lineEnd);
+    textarea.selectionStart = lineStart;
+    textarea.selectionEnd = lineStart + newBlock.length;
+    textarea.focus();
+    if (textarea === messageInput) autoResizeTextarea();
+}
+
+function handleListEnter(textarea, e) {
+    if (!textarea) return false;
+    const pos = textarea.selectionStart;
+    const val = textarea.value;
+
+    const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+    const currentLine = val.substring(lineStart, pos);
+
+    // 1. If line is just an empty bullet/number, pressing Enter clears the prefix (exits list)
+    if (/^\s*•\s*$/.test(currentLine) || /^\s*\d+\.\s*$/.test(currentLine)) {
+        e.preventDefault();
+        textarea.value = val.substring(0, lineStart) + val.substring(pos);
+        textarea.selectionStart = textarea.selectionEnd = lineStart;
+        if (textarea === messageInput) autoResizeTextarea();
+        return true;
+    }
+
+    // 2. If line starts with bullet with text: auto continue bullet
+    const bulletMatch = currentLine.match(/^(\s*)•\s+(.+)$/);
+    if (bulletMatch) {
+        e.preventDefault();
+        const indent = bulletMatch[1] || '';
+        const insertion = `\n${indent}• `;
+        textarea.value = val.substring(0, pos) + insertion + val.substring(pos);
+        textarea.selectionStart = textarea.selectionEnd = pos + insertion.length;
+        if (textarea === messageInput) autoResizeTextarea();
+        return true;
+    }
+
+    // 3. If line starts with numbering with text: auto continue incremented number
+    const numberMatch = currentLine.match(/^(\s*)(\d+)\.\s+(.+)$/);
+    if (numberMatch) {
+        e.preventDefault();
+        const indent = numberMatch[1] || '';
+        const nextNum = parseInt(numberMatch[2], 10) + 1;
+        const insertion = `\n${indent}${nextNum}. `;
+        textarea.value = val.substring(0, pos) + insertion + val.substring(pos);
+        textarea.selectionStart = textarea.selectionEnd = pos + insertion.length;
+        if (textarea === messageInput) autoResizeTextarea();
+        return true;
+    }
+
+    return false;
+}
+
 // Rich WhatsApp Text Formatter for message bubbles
 function renderFormattedWhatsAppText(rawText) {
     if (!rawText) return '';
@@ -1260,8 +1379,15 @@ messageInput.addEventListener('input', autoResizeTextarea);
 
 messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+        // If user pressed Enter on an empty bullet or numbered line, exit the list cleanly
+        const handled = handleListEnter(messageInput, e);
+        if (handled) return;
+
         e.preventDefault();
         sendMessage();
+    } else if (e.key === 'Enter' && e.shiftKey) {
+        // Continue list on Shift+Enter if inside a list
+        handleListEnter(messageInput, e);
     }
     // Shortcut Ctrl+Shift+F to format AI text
     if (e.ctrlKey && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
@@ -1316,6 +1442,19 @@ if (btnFormatAI) {
         messageInput.value = formatAITextToWhatsApp(val);
         autoResizeTextarea();
         showToast('Teks berhasil dirapikan untuk WhatsApp ✨');
+    });
+}
+
+// Auto Bullet and Numbering toolbar buttons for chat input
+if (btnInputBullet) {
+    btnInputBullet.addEventListener('click', () => {
+        applyListFormatting(messageInput, 'bullet');
+    });
+}
+
+if (btnInputNumber) {
+    btnInputNumber.addEventListener('click', () => {
+        applyListFormatting(messageInput, 'number');
     });
 }
 
