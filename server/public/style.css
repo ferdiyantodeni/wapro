@@ -436,10 +436,95 @@ body {
   margin-bottom: 3px;
 }
 
+/* Quoted message box inside bubble */
+.message-quoted {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-left: 4px solid #00a884;
+  border-radius: 6px;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: background-color 0.15s;
+}
+.message-quoted:hover {
+  background-color: rgba(0, 0, 0, 0.35);
+}
+.outgoing .message-quoted {
+  background-color: rgba(0, 0, 0, 0.25);
+  border-left-color: #53bdeb;
+}
+.quoted-sender {
+  font-weight: 600;
+  color: #53bdeb;
+  font-size: 11.5px;
+}
+.outgoing .quoted-sender {
+  color: #25d366;
+}
+.quoted-text {
+  color: #d1d7db;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  font-size: 12px;
+}
+
+/* Hover Reply button on message bubble */
+.btn-bubble-reply {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: rgba(32, 44, 51, 0.9);
+  border: none;
+  color: #8696a0;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  z-index: 2;
+}
+.outgoing .btn-bubble-reply {
+  background: rgba(0, 92, 75, 0.9);
+  color: #d1d7db;
+}
+.message-bubble:hover .btn-bubble-reply {
+  opacity: 1;
+  visibility: visible;
+}
+.btn-bubble-reply:hover {
+  background: #111b21;
+  color: #00a884;
+}
+
+/* Blue double check read receipt */
+.read-tick {
+  color: #53bdeb !important;
+}
+
+@keyframes highlightBubble {
+  0% { filter: brightness(1.7); transform: scale(1.02); }
+  100% { filter: brightness(1); transform: scale(1); }
+}
+.highlight-flash {
+  animation: highlightBubble 1.2s ease;
+}
+
 .message-text {
   margin-bottom: 4px;
 }
-	.message-time {
+.message-time {
   align-self: flex-end;
   font-size: 11px;
   color: #8696a0;
@@ -704,6 +789,56 @@ body {
   color: #e9edef;
 }
 
+/* Quoted Reply Preview Bar */
+.reply-preview-bar {
+  background-color: #202c33;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #2a3942;
+  position: relative;
+}
+.reply-bar-accent {
+  width: 4px;
+  height: 38px;
+  background-color: #00a884;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.reply-bar-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.reply-bar-sender {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #00a884;
+}
+.reply-bar-text {
+  font-size: 13px;
+  color: #8696a0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-cancel-reply {
+  background: none;
+  border: none;
+  color: #8696a0;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  transition: color 0.15s;
+}
+.btn-cancel-reply:hover {
+  color: #ef4444;
+}
+
 /* Attachment Preview Bar */
 .attachment-preview-bar {
   background-color: #202c33;
@@ -729,7 +864,34 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 400px;
+  max-width: 320px;
+}
+
+.attachment-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.sticker-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #00a884;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0, 168, 132, 0.12);
+  padding: 4px 10px;
+  border-radius: 12px;
+  transition: background 0.15s;
+}
+.sticker-toggle-label:hover {
+  background: rgba(0, 168, 132, 0.2);
+}
+.sticker-toggle-label input {
+  accent-color: #00a884;
+  cursor: pointer;
 }
 
 .attachment-preview-bar button {
@@ -744,13 +906,51 @@ body {
   color: #ef4444;
 }
 
+/* Media Tray (Emoji & Stickers) */
+.media-tray-container {
+  background-color: #202c33;
+  border-top: 1px solid #2a3942;
+  display: flex;
+  flex-direction: column;
+}
+
+.tray-tabs {
+  display: flex;
+  border-bottom: 1px solid #2a3942;
+  padding: 4px 16px 0;
+  gap: 8px;
+}
+
+.tray-tab {
+  background: none;
+  border: none;
+  color: #8696a0;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.15s;
+}
+
+.tray-tab:hover {
+  color: #e9edef;
+}
+
+.tray-tab.active {
+  color: #00a884;
+  border-bottom-color: #00a884;
+}
+
 /* Quick Emoji Tray */
 .emoji-tray {
   background-color: #202c33;
   padding: 8px 16px;
   display: flex;
   gap: 12px;
-  border-top: 1px solid #2a3942;
   overflow-x: auto;
 }
 
@@ -765,6 +965,42 @@ body {
 .emoji-item:hover {
   transform: scale(1.2);
   background-color: #2a3942;
+}
+
+/* Sticker Tray */
+.sticker-tray {
+  padding: 10px 16px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.sticker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.sticker-item {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.03);
+  transition: transform 0.15s, background-color 0.15s;
+}
+
+.sticker-item:hover {
+  transform: scale(1.15);
+  background-color: #2a3942;
+}
+
+.no-stickers-text {
+  font-size: 12.5px;
+  color: #8696a0;
+  padding: 12px 0;
 }
 
 /* Media Messages */

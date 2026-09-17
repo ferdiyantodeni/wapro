@@ -319,6 +319,36 @@ class WhatsAppSession {
                 });
             });
 
+            // Listen for message status updates (e.g. read receipts / centang biru)
+            this.sock.ev.on('messages.update', async (updates) => {
+                for (const update of updates) {
+                    const jid = update.key?.remoteJid;
+                    const id = update.key?.id;
+                    if (!jid || !id || !this.store.messages[jid]) continue;
+
+                    const targetMsg = this.store.messages[jid].find(m => m.id === id);
+                    if (!targetMsg) continue;
+
+                    let newStatus = targetMsg.status;
+                    const st = update.update?.status ?? update.status;
+                    if (st === 4 || st === 'READ') {
+                        newStatus = 'READ';
+                    } else if (st === 3 || st === 'DELIVERY_ACK') {
+                        if (newStatus !== 'READ') newStatus = 'DELIVERED';
+                    }
+
+                    if (targetMsg.status !== newStatus) {
+                        targetMsg.status = newStatus;
+                        this.saveStore();
+                        this.broadcast('message_status_update', {
+                            jid,
+                            id,
+                            status: newStatus
+                        });
+                    }
+                }
+            });
+
             this.sock.ev.on('messages.upsert', async ({ messages }) => {
                 for (const msg of messages) {
                     if (!msg.message) continue;
@@ -364,6 +394,36 @@ class WhatsAppSession {
 
                     if (!text && !mediaBase64) continue;
 
+                    // Extract quoted / reply context
+                    const contextInfo = mContent?.extendedTextMessage?.contextInfo ||
+                                        mContent?.imageMessage?.contextInfo ||
+                                        mContent?.videoMessage?.contextInfo ||
+                                        mContent?.documentMessage?.contextInfo ||
+                                        mContent?.audioMessage?.contextInfo ||
+                                        mContent?.stickerMessage?.contextInfo;
+
+                    let quoted = null;
+                    if (contextInfo?.quotedMessage) {
+                        const qText = extractMessageText({ message: contextInfo.quotedMessage });
+                        const qPart = contextInfo.participant || '';
+                        let qSender = 'Kontak';
+                        if (qPart) {
+                            const pJid = jidNormalizedUser(qPart);
+                            const myJid = this.currentUser?.id ? jidNormalizedUser(this.currentUser.id) : null;
+                            if (myJid && pJid === myJid) {
+                                qSender = 'Anda';
+                            } else {
+                                qSender = pJid.split('@')[0];
+                            }
+                        }
+                        quoted = {
+                            id: contextInfo.stanzaId,
+                            participant: qPart,
+                            text: qText || '[Media]',
+                            senderName: qSender
+                        };
+                    }
+
                     const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
                     const senderName = msg.pushName || jid.split('@')[0];
 
@@ -378,6 +438,9 @@ class WhatsAppSession {
                         fileSize,
                         timestamp,
                         senderName,
+                        senderJid: msg.key.participant || (fromMe ? (this.currentUser?.id ? jidNormalizedUser(this.currentUser.id) : '') : jid),
+                        participantJid: msg.key.participant || undefined,
+                        quoted,
                         status: fromMe ? 'SENT' : 'RECEIVED'
                     };
 
@@ -561,10 +624,39 @@ app.get('/api/messages/:jid', (req, res) => {
     res.json(msgs);
 });
 
+// Helper to build quoted message payload for Baileys
+function buildQuotedOptions(s, jid, quotedMsgId) {
+    if (!quotedMsgId || !s.store.messages[jid]) return { quotedOptions: undefined, quotedInfo: null };
+    const qMsg = s.store.messages[jid].find(m => m.id === quotedMsgId);
+    if (!qMsg) return { quotedOptions: undefined, quotedInfo: null };
+
+    const quotedOptions = {
+        quoted: {
+            key: {
+                remoteJid: jid,
+                fromMe: Boolean(qMsg.fromMe),
+                id: qMsg.id,
+                participant: jid.endsWith('@g.us') ? (qMsg.participantJid || qMsg.senderJid || undefined) : undefined
+            },
+            message: {
+                conversation: qMsg.text || ''
+            }
+        }
+    };
+
+    const quotedInfo = {
+        id: qMsg.id,
+        text: qMsg.text || (qMsg.msgType === 'image' ? '[Gambar]' : (qMsg.msgType === 'sticker' ? '[Stiker]' : '[Pesan]')),
+        senderName: qMsg.fromMe ? 'Anda' : (qMsg.senderName || 'Kontak')
+    };
+
+    return { quotedOptions, quotedInfo };
+}
+
 // 5. Send Message
 app.post('/api/messages/send', async (req, res) => {
     const s = req.sessionInstance;
-    let { jid, text } = req.body;
+    let { jid, text, quotedMsgId } = req.body;
     if (!jid || !text) return res.status(400).json({ error: 'JID dan teks pesan harus diisi' });
 
     if (!jid.includes('@')) {
@@ -578,7 +670,8 @@ app.post('/api/messages/send', async (req, res) => {
             return res.status(503).json({ error: 'WhatsApp belum terhubung' });
         }
 
-        const sent = await s.sock.sendMessage(jid, { text });
+        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, jid, quotedMsgId);
+        const sent = await s.sock.sendMessage(jid, { text }, quotedOptions);
         const timestamp = Date.now();
 
         if (!s.store.messages[jid]) s.store.messages[jid] = [];
@@ -588,6 +681,7 @@ app.post('/api/messages/send', async (req, res) => {
             text,
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
+            quoted: quotedInfo,
             status: 'SENT'
         };
         s.store.messages[jid].push(msgObj);
@@ -620,7 +714,7 @@ app.post('/api/messages/send', async (req, res) => {
 // 5b. Send Media
 app.post('/api/messages/send-media', async (req, res) => {
     const s = req.sessionInstance;
-    let { jid, caption, base64, mimeType, fileName } = req.body;
+    let { jid, caption, base64, mimeType, fileName, quotedMsgId } = req.body;
     if (!jid || !base64) return res.status(400).json({ error: 'JID dan file base64 harus diisi' });
 
     if (!jid.includes('@')) {
@@ -636,24 +730,25 @@ app.post('/api/messages/send-media', async (req, res) => {
 
         const dataPart = base64.includes(',') ? base64.split(',')[1] : base64;
         const buffer = Buffer.from(dataPart, 'base64');
+        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, jid, quotedMsgId);
         let sent;
         let msgType = 'document';
 
         if ((mimeType || '').startsWith('image/')) {
             msgType = 'image';
-            sent = await s.sock.sendMessage(jid, { image: buffer, caption: caption || '' });
+            sent = await s.sock.sendMessage(jid, { image: buffer, caption: caption || '' }, quotedOptions);
         } else if ((mimeType || '').startsWith('audio/')) {
             msgType = 'audio';
-            sent = await s.sock.sendMessage(jid, { audio: buffer, mimetype: mimeType || 'audio/mp4' });
+            sent = await s.sock.sendMessage(jid, { audio: buffer, mimetype: mimeType || 'audio/mp4' }, quotedOptions);
         } else if ((mimeType || '').startsWith('video/')) {
             msgType = 'video';
-            sent = await s.sock.sendMessage(jid, { video: buffer, caption: caption || '' });
+            sent = await s.sock.sendMessage(jid, { video: buffer, caption: caption || '' }, quotedOptions);
         } else {
             sent = await s.sock.sendMessage(jid, {
                 document: buffer,
                 mimetype: mimeType || 'application/octet-stream',
                 fileName: fileName || 'file'
-            });
+            }, quotedOptions);
         }
 
         const timestamp = Date.now();
@@ -667,6 +762,7 @@ app.post('/api/messages/send-media', async (req, res) => {
             fileSize: (buffer.length / 1024).toFixed(1) + ' KB',
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
+            quoted: quotedInfo,
             status: 'SENT'
         };
 
@@ -692,7 +788,64 @@ app.post('/api/messages/send-media', async (req, res) => {
     }
 });
 
-// 5c. Get Profile Picture Avatar
+// 5c. Send Sticker
+app.post('/api/messages/send-sticker', async (req, res) => {
+    const s = req.sessionInstance;
+    let { jid, base64, quotedMsgId } = req.body;
+    if (!jid || !base64) return res.status(400).json({ error: 'JID dan stiker base64 harus diisi' });
+
+    if (!jid.includes('@')) {
+        jid = jid.replace(/[^0-9]/g, '');
+        if (jid.startsWith('0')) jid = '62' + jid.slice(1);
+        jid = jid + '@s.whatsapp.net';
+    }
+
+    try {
+        if (!s.sock || s.connectionState !== 'open') {
+            return res.status(503).json({ error: 'WhatsApp belum terhubung' });
+        }
+
+        const dataPart = base64.includes(',') ? base64.split(',')[1] : base64;
+        const buffer = Buffer.from(dataPart, 'base64');
+        const { quotedOptions, quotedInfo } = buildQuotedOptions(s, jid, quotedMsgId);
+
+        const sent = await s.sock.sendMessage(jid, { sticker: buffer }, quotedOptions);
+        const timestamp = Date.now();
+
+        if (!s.store.messages[jid]) s.store.messages[jid] = [];
+        const msgObj = {
+            id: sent.key.id,
+            fromMe: true,
+            text: '[Stiker]',
+            msgType: 'sticker',
+            mediaBase64: base64,
+            timestamp,
+            senderName: s.currentUser?.name || 'Saya',
+            quoted: quotedInfo,
+            status: 'SENT'
+        };
+        s.store.messages[jid].push(msgObj);
+
+        const isGroup = jid.endsWith('@g.us');
+        s.store.chats[jid] = {
+            jid,
+            name: s.store.chats[jid]?.name || jid.split('@')[0],
+            isGroup,
+            lastMessage: '[Stiker]',
+            timestamp,
+            unread: 0
+        };
+
+        s.saveStore();
+        s.broadcast('new_message', { jid, message: msgObj, chat: s.store.chats[jid] });
+        res.json({ success: true, messageId: sent.key.id });
+    } catch (e) {
+        console.error(`[${s.sessionId}] Error sending sticker:`, e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 5d. Get Profile Picture Avatar
 app.get('/api/avatar/:jid', async (req, res) => {
     const s = req.sessionInstance;
     const { jid } = req.params;
@@ -706,15 +859,36 @@ app.get('/api/avatar/:jid', async (req, res) => {
     }
 });
 
-// 6. Mark chat as read
-app.post('/api/messages/read', (req, res) => {
+// 6. Mark chat as read & send official WhatsApp read receipt
+app.post('/api/messages/read', async (req, res) => {
     const s = req.sessionInstance;
     const { jid } = req.body;
+    if (!jid) return res.json({ success: false });
+
     if (s.store.chats[jid]) {
         s.store.chats[jid].unread = 0;
         s.saveStore();
         s.broadcast('chat_updated', s.store.chats[jid]);
     }
+
+    try {
+        if (s.sock && s.connectionState === 'open' && s.store.messages[jid]) {
+            const unreadMsgs = s.store.messages[jid].filter(m => !m.fromMe && m.status !== 'READ');
+            if (unreadMsgs.length > 0) {
+                const keys = unreadMsgs.map(m => ({
+                    remoteJid: jid,
+                    id: m.id,
+                    participant: m.participantJid || undefined
+                }));
+                await s.sock.readMessages(keys).catch(() => {});
+                unreadMsgs.forEach(m => m.status = 'READ');
+                s.saveStore();
+            }
+        }
+    } catch (e) {
+        console.error(`[${s.sessionId}] Error marking messages as read:`, e.message);
+    }
+
     res.json({ success: true });
 });
 

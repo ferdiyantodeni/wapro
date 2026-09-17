@@ -72,31 +72,58 @@
 
                 <div class="messages-container" id="messagesContainer"></div>
 
+                <!-- Quoted Reply Preview Bar -->
+                <div class="reply-preview-bar" id="replyPreviewBar" style="display: none;">
+                    <div class="reply-bar-accent"></div>
+                    <div class="reply-bar-content">
+                        <div class="reply-bar-sender" id="replyBarSender">Nama Pengirim</div>
+                        <div class="reply-bar-text" id="replyBarText">Isi pesan yang dikutip...</div>
+                    </div>
+                    <button class="btn-cancel-reply" id="btnCancelReply" title="Batal Balas"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+
                 <!-- Attachment Preview Banner (if file selected or pasted) -->
                 <div class="attachment-preview-bar" id="attachmentPreviewBar" style="display: none;">
                     <div class="preview-info">
                         <i class="fa-solid fa-file-arrow-up"></i>
                         <span id="attachmentFileName">file.png</span>
                     </div>
-                    <button id="btnCancelAttachment" title="Hapus Lampiran"><i class="fa-solid fa-xmark"></i></button>
+                    <div class="attachment-actions">
+                        <label class="sticker-toggle-label" id="stickerToggleContainer" style="display: none;">
+                            <input type="checkbox" id="sendAsStickerCheckbox">
+                            <span>Kirim sebagai Stiker</span>
+                        </label>
+                        <button id="btnCancelAttachment" title="Hapus Lampiran"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
                 </div>
 
-                <!-- Quick Emoji Tray -->
-                <div class="emoji-tray" id="emojiTray" style="display: none;">
-                    <span class="emoji-item">👍</span>
-                    <span class="emoji-item">❤️</span>
-                    <span class="emoji-item">😂</span>
-                    <span class="emoji-item">🙏</span>
-                    <span class="emoji-item">😊</span>
-                    <span class="emoji-item">🔥</span>
-                    <span class="emoji-item">🎉</span>
-                    <span class="emoji-item">ok</span>
-                    <span class="emoji-item"> siap</span>
-                    <span class="emoji-item">✅</span>
-                    <span class="emoji-item">👏</span>
-                    <span class="emoji-item">😁</span>
-                    <span class="emoji-item">😅</span>
-                    <span class="emoji-item">💯</span>
+                <!-- Media Tray (Emoji & Stickers) -->
+                <div class="media-tray-container" id="mediaTrayContainer" style="display: none;">
+                    <div class="tray-tabs">
+                        <button class="tray-tab active" id="tabEmojiBtn"><i class="fa-regular fa-face-smile"></i> Emoji</button>
+                        <button class="tray-tab" id="tabStickerBtn"><i class="fa-solid fa-note-sticky"></i> Stiker</button>
+                    </div>
+                    <div class="emoji-tray" id="emojiTray">
+                        <span class="emoji-item">👍</span>
+                        <span class="emoji-item">❤️</span>
+                        <span class="emoji-item">😂</span>
+                        <span class="emoji-item">🙏</span>
+                        <span class="emoji-item">😊</span>
+                        <span class="emoji-item">🔥</span>
+                        <span class="emoji-item">🎉</span>
+                        <span class="emoji-item">ok</span>
+                        <span class="emoji-item"> siap</span>
+                        <span class="emoji-item">✅</span>
+                        <span class="emoji-item">👏</span>
+                        <span class="emoji-item">😁</span>
+                        <span class="emoji-item">😅</span>
+                        <span class="emoji-item">💯</span>
+                    </div>
+                    <div class="sticker-tray" id="stickerTray" style="display: none;">
+                        <div class="sticker-list" id="stickerList">
+                            <span class="no-stickers-text">Belum ada stiker tersimpan. Klik stiker di chat untuk simpan atau kirim ulang!</span>
+                        </div>
+                    </div>
                 </div>
 
                 <footer class="chat-input-bar">

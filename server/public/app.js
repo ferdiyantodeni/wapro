@@ -1,11 +1,14 @@
 // WaPro Web Client - Multi-User WhatsApp Web Clone
 let ws = null;
 let currentChatJid = null;
+let currentChatMessages = [];
 let allChats = [];
 let connectionState = 'connecting';
 let currentUser = null;
 let activeFilter = 'all'; // 'all', 'unread', 'group'
 let stagedAttachment = null; // { base64, mimeType, fileName }
+let activeQuotedMsg = null; // Quoted message object being replied to
+let savedStickers = JSON.parse(localStorage.getItem('wapro_saved_stickers') || '[]');
 
 // Multi-User Session Identification
 let sessionId = localStorage.getItem('wapro_session_id');
@@ -56,8 +59,19 @@ const fileAttachmentInput = document.getElementById('fileAttachmentInput');
 const attachmentPreviewBar = document.getElementById('attachmentPreviewBar');
 const attachmentFileName = document.getElementById('attachmentFileName');
 const btnCancelAttachment = document.getElementById('btnCancelAttachment');
+const stickerToggleContainer = document.getElementById('stickerToggleContainer');
+const sendAsStickerCheckbox = document.getElementById('sendAsStickerCheckbox');
 const btnToggleEmoji = document.getElementById('btnToggleEmoji');
+const mediaTrayContainer = document.getElementById('mediaTrayContainer');
+const tabEmojiBtn = document.getElementById('tabEmojiBtn');
+const tabStickerBtn = document.getElementById('tabStickerBtn');
 const emojiTray = document.getElementById('emojiTray');
+const stickerTray = document.getElementById('stickerTray');
+const stickerList = document.getElementById('stickerList');
+const replyPreviewBar = document.getElementById('replyPreviewBar');
+const replyBarSender = document.getElementById('replyBarSender');
+const replyBarText = document.getElementById('replyBarText');
+const btnCancelReply = document.getElementById('btnCancelReply');
 
 // Request Browser Notifications on Click
 if ('Notification' in window && Notification.permission === 'default') {
@@ -158,6 +172,19 @@ function handleWsEvent(evt, data) {
         showQrCode(data.qr);
     } else if (evt === 'pairing_code') {
         showPairingCode(data.code);
+    } else if (evt === 'message_status_update') {
+        const { jid, id, status } = data;
+        if (currentChatJid === jid) {
+            const bubble = document.querySelector('.message-bubble[data-id="' + id + '"]');
+            if (bubble) {
+                const tick = bubble.querySelector('.fa-check-double');
+                if (tick && status === 'READ') {
+                    tick.classList.add('read-tick');
+                }
+            }
+            const m = currentChatMessages.find(msg => msg.id === id);
+            if (m) m.status = status;
+        }
     } else if (evt === 'new_message') {
         const jid = data.jid;
         const message = data.message;
@@ -169,7 +196,12 @@ function handleWsEvent(evt, data) {
         allChats.unshift(chat);
         renderChatList(allChats);
 
+        if (message.msgType === 'sticker' && message.mediaBase64) {
+            saveStickerToTray(message.mediaBase64);
+        }
+
         if (currentChatJid === jid) {
+            currentChatMessages.push(message);
             appendMessage(message);
             scrollToBottom();
             sessionFetch('/api/messages/read', {
@@ -299,6 +331,7 @@ function renderChatList(chats) {
 
 window.selectChat = async function(jid) {
     currentChatJid = jid;
+    cancelReply();
     const chat = allChats.find(c => c.jid === jid);
 
     const bgGradient = getAvatarBg(chat?.jid || jid);
@@ -316,8 +349,8 @@ window.selectChat = async function(jid) {
     messagesContainer.innerHTML = '<div class="empty-state-list"><i class="fa-solid fa-spinner fa-spin"></i><p>Memuat pesan...</p></div>';
     try {
         const res = await sessionFetch('/api/messages/' + encodeURIComponent(jid));
-        const messages = await res.json();
-        renderMessages(messages);
+        currentChatMessages = await res.json();
+        renderMessages(currentChatMessages);
         scrollToBottom();
 
         sessionFetch('/api/messages/read', {
@@ -352,13 +385,29 @@ function appendMessage(m) {
     bubble.className = 'message-bubble ' + (isOut ? 'outgoing' : 'incoming') + (isSticker ? ' is-sticker' : '');
     if (m.id) bubble.setAttribute('data-id', m.id);
 
+    // Double-click to quick reply
+    bubble.ondblclick = (e) => window.startReply(m.id, e);
+
+    const replyBtnHtml = '<button class="btn-bubble-reply" title="Balas pesan" onclick="startReply(\'' + escapeHtml(m.id) + '\', event)"><i class="fa-solid fa-reply"></i></button>';
     const senderHtml = (!isOut && m.senderName) ? ('<div class="message-sender">' + escapeHtml(m.senderName) + '</div>') : '';
     const timeStr = formatTime(m.timestamp);
-    const tickIcon = isOut ? '<i class="fa-solid fa-check-double" style="font-size: 10px;"></i>' : '';
+    const isRead = m.status === 'READ';
+    const tickIcon = isOut ? ('<i class="fa-solid fa-check-double' + (isRead ? ' read-tick' : '') + '" style="font-size: 10px;"></i>') : '';
+
+    // Quoted message box inside bubble
+    let quotedHtml = '';
+    if (m.quoted) {
+        const qSender = escapeHtml(m.quoted.senderName || 'Pesan');
+        const qText = escapeHtml(m.quoted.text || '');
+        quotedHtml = '<div class="message-quoted" onclick="scrollToMessage(\'' + escapeHtml(m.quoted.id) + '\')">' +
+            '<span class="quoted-sender">' + qSender + '</span>' +
+            '<span class="quoted-text">' + qText + '</span>' +
+        '</div>';
+    }
 
     let contentHtml = '';
     if (isSticker) {
-        contentHtml = '<img src="' + m.mediaBase64 + '" class="message-sticker" alt="Sticker" />';
+        contentHtml = '<img src="' + m.mediaBase64 + '" class="message-sticker" alt="Sticker" title="Klik untuk kirim ulang stiker" onclick="onStickerClick(\'' + m.mediaBase64 + '\')" />';
     } else if (m.msgType === 'image' && m.mediaBase64) {
         contentHtml = '<img src="' + m.mediaBase64 + '" class="message-image" alt="Gambar" onclick="window.open(\'' + m.mediaBase64 + '\')" />' +
                       (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + escapeHtml(m.text) + '</div>' : '');
@@ -377,7 +426,9 @@ function appendMessage(m) {
         contentHtml = '<div class="message-text">' + escapeHtml(m.text || '') + '</div>';
     }
 
-    bubble.innerHTML = senderHtml +
+    bubble.innerHTML = replyBtnHtml +
+        senderHtml +
+        quotedHtml +
         contentHtml +
         '<div class="message-time">' +
             '<span>' + timeStr + '</span>' +
@@ -391,37 +442,125 @@ function scrollToBottom() {
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
+window.startReply = function(msgId, e) {
+    if (e) e.stopPropagation();
+    const msg = currentChatMessages.find(m => m.id === msgId);
+    if (!msg) return;
+
+    activeQuotedMsg = msg;
+    replyBarSender.textContent = msg.fromMe ? 'Anda' : (msg.senderName || 'Kontak');
+    replyBarText.textContent = msg.text || (msg.msgType === 'image' ? '[Gambar]' : (msg.msgType === 'sticker' ? '[Stiker]' : '[Pesan]'));
+    replyPreviewBar.style.display = 'flex';
+    messageInput.focus();
+};
+
+window.cancelReply = function() {
+    activeQuotedMsg = null;
+    replyPreviewBar.style.display = 'none';
+};
+
+window.scrollToMessage = function(targetId) {
+    if (!targetId) return;
+    const el = document.querySelector('.message-bubble[data-id="' + targetId + '"]');
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.remove('highlight-flash');
+        void el.offsetWidth;
+        el.classList.add('highlight-flash');
+    }
+};
+
+window.saveStickerToTray = function(mediaBase64) {
+    if (!mediaBase64) return;
+    if (!savedStickers.includes(mediaBase64)) {
+        savedStickers.unshift(mediaBase64);
+        if (savedStickers.length > 40) savedStickers.pop();
+        localStorage.setItem('wapro_saved_stickers', JSON.stringify(savedStickers));
+        renderStickerTray();
+    }
+};
+
+window.sendStickerDirect = async function(base64) {
+    if (!currentChatJid || !base64) return;
+    const quotedMsgId = activeQuotedMsg ? activeQuotedMsg.id : null;
+    cancelReply();
+
+    try {
+        const res = await sessionFetch('/api/messages/send-sticker', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jid: currentChatJid,
+                base64,
+                quotedMsgId
+            })
+        });
+        const result = await res.json();
+        if (!result.success) {
+            alert('Gagal mengirim stiker: ' + (result.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Gagal mengirim stiker: ' + e.message);
+    }
+};
+
+window.onStickerClick = function(base64) {
+    saveStickerToTray(base64);
+    if (confirm('Kirim ulang stiker ini sekarang?')) {
+        window.sendStickerDirect(base64);
+    }
+};
+
 async function sendMessage() {
     const text = messageInput.value.trim();
     if ((!text && !stagedAttachment) || !currentChatJid) return;
+
+    const quotedMsgId = activeQuotedMsg ? activeQuotedMsg.id : null;
+    cancelReply();
 
     messageInput.value = '';
     messageInput.focus();
 
     try {
         if (stagedAttachment) {
-            const payload = {
-                jid: currentChatJid,
-                caption: text,
-                base64: stagedAttachment.base64,
-                mimeType: stagedAttachment.mimeType,
-                fileName: stagedAttachment.fileName
-            };
+            const isSticker = sendAsStickerCheckbox.checked;
+            const attachment = stagedAttachment;
             clearAttachment();
-            const res = await sessionFetch('/api/messages/send-media', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const result = await res.json();
-            if (!result.success) {
-                alert('Gagal mengirim file: ' + (result.error || 'Unknown error'));
+
+            if (isSticker) {
+                const res = await sessionFetch('/api/messages/send-sticker', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jid: currentChatJid,
+                        base64: attachment.base64,
+                        quotedMsgId
+                    })
+                });
+                const result = await res.json();
+                if (!result.success) alert('Gagal mengirim stiker: ' + (result.error || 'Unknown error'));
+            } else {
+                const payload = {
+                    jid: currentChatJid,
+                    caption: text,
+                    base64: attachment.base64,
+                    mimeType: attachment.mimeType,
+                    fileName: attachment.fileName,
+                    quotedMsgId
+                };
+                const res = await sessionFetch('/api/messages/send-media', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                if (!result.success) alert('Gagal mengirim file: ' + (result.error || 'Unknown error'));
             }
         } else {
             const res = await sessionFetch('/api/messages/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jid: currentChatJid, text })
+                body: JSON.stringify({ jid: currentChatJid, text, quotedMsgId })
             });
             const result = await res.json();
             if (!result.success) {
@@ -437,10 +576,13 @@ function clearAttachment() {
     stagedAttachment = null;
     attachmentPreviewBar.style.display = 'none';
     fileAttachmentInput.value = '';
+    stickerToggleContainer.style.display = 'none';
+    sendAsStickerCheckbox.checked = false;
 }
 
 function stageFile(file) {
     if (!file) return;
+    const isImage = (file.type || '').startsWith('image/');
     const reader = new FileReader();
     reader.onload = (e) => {
         stagedAttachment = {
@@ -449,6 +591,13 @@ function stageFile(file) {
             fileName: file.name || 'file'
         };
         attachmentFileName.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+        if (isImage) {
+            stickerToggleContainer.style.display = 'inline-flex';
+            sendAsStickerCheckbox.checked = false;
+        } else {
+            stickerToggleContainer.style.display = 'none';
+            sendAsStickerCheckbox.checked = false;
+        }
         attachmentPreviewBar.style.display = 'flex';
     };
     reader.readAsDataURL(file);
@@ -489,11 +638,48 @@ fileAttachmentInput.addEventListener('change', (e) => {
 
 btnCancelAttachment.addEventListener('click', clearAttachment);
 
-// Emoji Tray Toggle & Insert
+// Cancel Reply Button
+btnCancelReply.addEventListener('click', cancelReply);
+
+// Media Tray (Emoji & Stickers) Toggle & Tabs
 btnToggleEmoji.addEventListener('click', () => {
-    const isShown = emojiTray.style.display === 'flex';
-    emojiTray.style.display = isShown ? 'none' : 'flex';
+    const isShown = mediaTrayContainer.style.display === 'flex';
+    mediaTrayContainer.style.display = isShown ? 'none' : 'flex';
 });
+
+tabEmojiBtn.addEventListener('click', () => {
+    tabEmojiBtn.classList.add('active');
+    tabStickerBtn.classList.remove('active');
+    emojiTray.style.display = 'flex';
+    stickerTray.style.display = 'none';
+});
+
+tabStickerBtn.addEventListener('click', () => {
+    tabStickerBtn.classList.add('active');
+    tabEmojiBtn.classList.remove('active');
+    emojiTray.style.display = 'none';
+    stickerTray.style.display = 'block';
+    renderStickerTray();
+});
+
+function renderStickerTray() {
+    if (!savedStickers || savedStickers.length === 0) {
+        stickerList.innerHTML = '<span class="no-stickers-text">Belum ada stiker tersimpan. Klik stiker di chat untuk simpan atau kirim ulang!</span>';
+        return;
+    }
+    stickerList.innerHTML = '';
+    savedStickers.forEach(b64 => {
+        const img = document.createElement('img');
+        img.className = 'sticker-item';
+        img.src = b64;
+        img.title = 'Klik untuk langsung kirim stiker ini';
+        img.onclick = () => {
+            window.sendStickerDirect(b64);
+            mediaTrayContainer.style.display = 'none';
+        };
+        stickerList.appendChild(img);
+    });
+}
 
 document.querySelectorAll('.emoji-item').forEach(el => {
     el.addEventListener('click', () => {
