@@ -859,6 +859,80 @@ app.get('/api/avatar/:jid', async (req, res) => {
     }
 });
 
+// 5e. Edit Sent Message
+app.post('/api/messages/edit', async (req, res) => {
+    const s = req.sessionInstance;
+    let { jid, id, text } = req.body;
+    if (!jid || !id || !text) return res.status(400).json({ error: 'JID, ID pesan, dan teks baru harus diisi' });
+
+    try {
+        if (!s.sock || s.connectionState !== 'open') {
+            return res.status(503).json({ error: 'WhatsApp belum terhubung' });
+        }
+
+        const editKey = {
+            remoteJid: jid,
+            fromMe: true,
+            id: id
+        };
+
+        await s.sock.sendMessage(jid, {
+            text,
+            edit: editKey
+        });
+
+        if (s.store.messages[jid]) {
+            const target = s.store.messages[jid].find(m => m.id === id);
+            if (target) {
+                target.text = text;
+                target.isEdited = true;
+                s.saveStore();
+            }
+        }
+
+        s.broadcast('message_edited', { jid, id, text });
+        res.json({ success: true, id, text });
+    } catch (e) {
+        console.error(`[${s.sessionId}] Error editing message:`, e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 5f. Translate Text
+app.post('/api/translate', async (req, res) => {
+    let { text, targetLang } = req.body;
+    if (!text) return res.status(400).json({ error: 'Teks harus diisi' });
+
+    try {
+        const tl = targetLang || 'id';
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`;
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        let translatedText = '';
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+            translatedText = data[0].map(item => item[0]).filter(Boolean).join('');
+        }
+        const detectedSource = data?.[2] || 'auto';
+
+        if (detectedSource === tl && tl === 'id') {
+            const urlEn = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(text)}`;
+            const resEn = await fetch(urlEn);
+            const dataEn = await resEn.json();
+            if (Array.isArray(dataEn) && Array.isArray(dataEn[0])) {
+                translatedText = dataEn[0].map(item => item[0]).filter(Boolean).join('');
+            }
+            return res.json({ success: true, translatedText, from: detectedSource, to: 'en' });
+        }
+
+        res.json({ success: true, translatedText, from: detectedSource, to: tl });
+    } catch (e) {
+        console.error('Translate error:', e);
+        res.status(500).json({ error: 'Gagal menerjemahkan teks: ' + e.message });
+    }
+});
+
 // 6. Mark chat as read & send official WhatsApp read receipt
 app.post('/api/messages/read', async (req, res) => {
     const s = req.sessionInstance;

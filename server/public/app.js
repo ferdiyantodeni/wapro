@@ -73,6 +73,25 @@ const replyBarSender = document.getElementById('replyBarSender');
 const replyBarText = document.getElementById('replyBarText');
 const btnCancelReply = document.getElementById('btnCancelReply');
 
+// Dropdown Context Menu & Modals
+let contextMenuTargetMsg = null;
+const msgContextMenu = document.getElementById('msgContextMenu');
+const ctxReply = document.getElementById('ctxReply');
+const ctxForward = document.getElementById('ctxForward');
+const ctxCopy = document.getElementById('ctxCopy');
+const ctxTranslate = document.getElementById('ctxTranslate');
+const ctxEdit = document.getElementById('ctxEdit');
+const forwardModal = document.getElementById('forwardModal');
+const forwardSearchInput = document.getElementById('forwardSearchInput');
+const forwardChatList = document.getElementById('forwardChatList');
+const btnCancelForward = document.getElementById('btnCancelForward');
+const editModal = document.getElementById('editModal');
+const editMessageInput = document.getElementById('editMessageInput');
+const btnCancelEdit = document.getElementById('btnCancelEdit');
+const btnSaveEdit = document.getElementById('btnSaveEdit');
+const toastNotification = document.getElementById('toastNotification');
+const toastText = document.getElementById('toastText');
+
 // Request Browser Notifications on Click
 if ('Notification' in window && Notification.permission === 'default') {
     window.addEventListener('click', () => {
@@ -184,6 +203,27 @@ function handleWsEvent(evt, data) {
             }
             const m = currentChatMessages.find(msg => msg.id === id);
             if (m) m.status = status;
+        }
+    } else if (evt === 'message_edited') {
+        const { jid, id, text } = data;
+        if (currentChatJid === jid) {
+            const bubble = document.querySelector('.message-bubble[data-id="' + id + '"]');
+            if (bubble) {
+                const textEl = bubble.querySelector('.message-text');
+                if (textEl) textEl.innerHTML = escapeHtml(text);
+                const timeEl = bubble.querySelector('.message-time');
+                if (timeEl && !bubble.querySelector('.message-edited-badge')) {
+                    const badge = document.createElement('span');
+                    badge.className = 'message-edited-badge';
+                    badge.textContent = '(diedit)';
+                    timeEl.prepend(badge);
+                }
+            }
+            const m = currentChatMessages.find(msg => msg.id === id);
+            if (m) {
+                m.text = text;
+                m.isEdited = true;
+            }
         }
     } else if (evt === 'new_message') {
         const jid = data.jid;
@@ -388,11 +428,12 @@ function appendMessage(m) {
     // Double-click to quick reply
     bubble.ondblclick = (e) => window.startReply(m.id, e);
 
-    const replyBtnHtml = '<button class="btn-bubble-reply" title="Balas pesan" onclick="startReply(\'' + escapeHtml(m.id) + '\', event)"><i class="fa-solid fa-reply"></i></button>';
+    const dropdownBtnHtml = '<button class="btn-msg-dropdown" title="Menu pesan" onclick="openMsgContextMenu(\'' + escapeHtml(m.id) + '\', event)"><i class="fa-solid fa-chevron-down"></i></button>';
     const senderHtml = (!isOut && m.senderName) ? ('<div class="message-sender">' + escapeHtml(m.senderName) + '</div>') : '';
     const timeStr = formatTime(m.timestamp);
     const isRead = m.status === 'READ';
     const tickIcon = isOut ? ('<i class="fa-solid fa-check-double' + (isRead ? ' read-tick' : '') + '" style="font-size: 10px;"></i>') : '';
+    const editedBadgeHtml = m.isEdited ? '<span class="message-edited-badge">(diedit)</span>' : '';
 
     // Quoted message box inside bubble
     let quotedHtml = '';
@@ -426,11 +467,12 @@ function appendMessage(m) {
         contentHtml = '<div class="message-text">' + escapeHtml(m.text || '') + '</div>';
     }
 
-    bubble.innerHTML = replyBtnHtml +
+    bubble.innerHTML = dropdownBtnHtml +
         senderHtml +
         quotedHtml +
         contentHtml +
         '<div class="message-time">' +
+            editedBadgeHtml +
             '<span>' + timeStr + '</span>' +
             tickIcon +
         '</div>';
@@ -458,6 +500,311 @@ window.cancelReply = function() {
     activeQuotedMsg = null;
     replyPreviewBar.style.display = 'none';
 };
+
+// Toast Notification Helper
+function showToast(text) {
+    if (!toastNotification || !toastText) return;
+    toastText.textContent = text;
+    toastNotification.style.display = 'flex';
+    clearTimeout(window._toastTimer);
+    window._toastTimer = setTimeout(() => {
+        toastNotification.style.display = 'none';
+    }, 2400);
+}
+
+// Open Message Dropdown Context Menu
+window.openMsgContextMenu = function(msgId, e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    const msg = currentChatMessages.find(m => m.id === msgId);
+    if (!msg) return;
+
+    contextMenuTargetMsg = msg;
+
+    // Edit option is only for own text messages
+    if (msg.fromMe && (!msg.msgType || msg.msgType === 'text')) {
+        ctxEdit.style.display = 'flex';
+    } else {
+        ctxEdit.style.display = 'none';
+    }
+
+    // Copy & Translate only for text messages
+    if (msg.text && msg.msgType !== 'sticker') {
+        ctxCopy.style.display = 'flex';
+        ctxTranslate.style.display = 'flex';
+    } else {
+        ctxCopy.style.display = 'none';
+        ctxTranslate.style.display = 'none';
+    }
+
+    msgContextMenu.style.display = 'block';
+
+    const menuWidth = 180;
+    const menuHeight = msgContextMenu.offsetHeight || 180;
+    let x = e ? e.clientX : 100;
+    let y = e ? e.clientY : 100;
+
+    if (x + menuWidth > window.innerWidth) {
+        x = window.innerWidth - menuWidth - 12;
+    }
+    if (y + menuHeight > window.innerHeight) {
+        y = window.innerHeight - menuHeight - 12;
+    }
+
+    msgContextMenu.style.left = Math.max(10, x) + 'px';
+    msgContextMenu.style.top = Math.max(10, y) + 'px';
+};
+
+window.closeMsgContextMenu = function() {
+    if (msgContextMenu) msgContextMenu.style.display = 'none';
+    contextMenuTargetMsg = null;
+};
+
+// Close context menu on click outside
+document.addEventListener('click', (e) => {
+    if (msgContextMenu && !msgContextMenu.contains(e.target)) {
+        closeMsgContextMenu();
+    }
+});
+
+// Context Menu: Reply
+if (ctxReply) {
+    ctxReply.onclick = () => {
+        if (!contextMenuTargetMsg) return;
+        const msgId = contextMenuTargetMsg.id;
+        closeMsgContextMenu();
+        startReply(msgId);
+    };
+}
+
+// Context Menu: Copy
+if (ctxCopy) {
+    ctxCopy.onclick = async () => {
+        if (!contextMenuTargetMsg || !contextMenuTargetMsg.text) return;
+        const textToCopy = contextMenuTargetMsg.text;
+        closeMsgContextMenu();
+        try {
+            await navigator.clipboard.writeText(textToCopy);
+            showToast('Teks berhasil disalin!');
+        } catch (err) {
+            const ta = document.createElement('textarea');
+            ta.value = textToCopy;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast('Teks berhasil disalin!');
+        }
+    };
+}
+
+// Context Menu: Translate
+if (ctxTranslate) {
+    ctxTranslate.onclick = async () => {
+        if (!contextMenuTargetMsg || !contextMenuTargetMsg.text) return;
+        const msg = contextMenuTargetMsg;
+        closeMsgContextMenu();
+
+        const bubble = document.querySelector('.message-bubble[data-id="' + msg.id + '"]');
+        if (!bubble) return;
+
+        const oldTrans = bubble.querySelector('.message-translation');
+        if (oldTrans) oldTrans.remove();
+
+        const transBox = document.createElement('div');
+        transBox.className = 'message-translation';
+        transBox.innerHTML = '<div class="translation-header"><span><i class="fa-solid fa-spinner fa-spin"></i> Menerjemahkan...</span></div>';
+        bubble.appendChild(transBox);
+
+        try {
+            const res = await sessionFetch('/api/translate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: msg.text })
+            });
+            const data = await res.json();
+            if (data.success && data.translatedText) {
+                const srcLang = (data.from || 'auto').toUpperCase();
+                const dstLang = (data.to || 'id').toUpperCase();
+                transBox.innerHTML = 
+                    '<div class="translation-header">' +
+                        '<span><i class="fa-solid fa-language"></i> Terjemahan (' + srcLang + ' → ' + dstLang + ')</span>' +
+                        '<button class="btn-close-trans" title="Tutup" onclick="this.closest(\'.message-translation\').remove()"><i class="fa-solid fa-xmark"></i></button>' +
+                    '</div>' +
+                    '<div class="translation-text">' + escapeHtml(data.translatedText) + '</div>';
+            } else {
+                transBox.innerHTML = '<div class="translation-header" style="color:#ef4444;"><span>Gagal menerjemahkan</span><button class="btn-close-trans" onclick="this.closest(\'.message-translation\').remove()"><i class="fa-solid fa-xmark"></i></button></div>';
+            }
+        } catch (e) {
+            transBox.innerHTML = '<div class="translation-header" style="color:#ef4444;"><span>Error: ' + escapeHtml(e.message) + '</span><button class="btn-close-trans" onclick="this.closest(\'.message-translation\').remove()"><i class="fa-solid fa-xmark"></i></button></div>';
+        }
+    };
+}
+
+// Context Menu: Edit
+if (ctxEdit) {
+    ctxEdit.onclick = () => {
+        if (!contextMenuTargetMsg) return;
+        const msg = contextMenuTargetMsg;
+        closeMsgContextMenu();
+        editMessageInput.value = msg.text || '';
+        editModal.style.display = 'flex';
+        editMessageInput.dataset.editMsgId = msg.id;
+        editMessageInput.focus();
+    };
+}
+
+if (btnCancelEdit) {
+    btnCancelEdit.onclick = () => {
+        editModal.style.display = 'none';
+        delete editMessageInput.dataset.editMsgId;
+    };
+}
+
+if (btnSaveEdit) {
+    btnSaveEdit.onclick = async () => {
+        const msgId = editMessageInput.dataset.editMsgId;
+        const newText = editMessageInput.value.trim();
+        if (!msgId || !newText || !currentChatJid) return;
+
+        btnSaveEdit.disabled = true;
+        btnSaveEdit.textContent = 'Menyimpan...';
+
+        try {
+            const res = await sessionFetch('/api/messages/edit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jid: currentChatJid,
+                    id: msgId,
+                    text: newText
+                })
+            });
+            const result = await res.json();
+            if (result.success) {
+                editModal.style.display = 'none';
+                delete editMessageInput.dataset.editMsgId;
+                showToast('Pesan berhasil diedit!');
+            } else {
+                alert('Gagal mengedit pesan: ' + (result.error || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Gagal mengedit pesan: ' + e.message);
+        } finally {
+            btnSaveEdit.disabled = false;
+            btnSaveEdit.textContent = 'Simpan';
+        }
+    };
+}
+
+// Context Menu: Forward
+if (ctxForward) {
+    ctxForward.onclick = () => {
+        if (!contextMenuTargetMsg) return;
+        const msg = contextMenuTargetMsg;
+        closeMsgContextMenu();
+
+        forwardModal.style.display = 'flex';
+        forwardModal.dataset.forwardMsgId = msg.id;
+        forwardSearchInput.value = '';
+        renderForwardChatList(allChats);
+        forwardSearchInput.focus();
+    };
+}
+
+function renderForwardChatList(chats) {
+    if (!forwardChatList) return;
+    forwardChatList.innerHTML = '';
+    const q = forwardSearchInput.value.toLowerCase().trim();
+    let filtered = chats;
+    if (q) {
+        filtered = filtered.filter(c => 
+            (c.name && c.name.toLowerCase().includes(q)) || 
+            c.jid.includes(q)
+        );
+    }
+
+    if (!filtered || filtered.length === 0) {
+        forwardChatList.innerHTML = '<div style="padding:16px;text-align:center;color:#8696a0;font-size:13px;">Tidak ada kontak</div>';
+        return;
+    }
+
+    filtered.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'forward-chat-item';
+        const initials = getAvatarInitials(c.name);
+        const bg = getAvatarBg(c.jid || c.name);
+
+        item.innerHTML = 
+            '<div class="chat-avatar" style="background:' + bg + ';width:36px;height:36px;font-size:13px;flex-shrink:0;">' + initials + '</div>' +
+            '<div style="display:flex;flex-direction:column;flex:1;overflow:hidden;">' +
+                '<span style="color:#e9edef;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(c.name || c.jid.split('@')[0]) + '</span>' +
+                '<span style="color:#8696a0;font-size:11.5px;">' + (c.isGroup ? 'Grup' : c.jid.split('@')[0]) + '</span>' +
+            '</div>' +
+            '<i class="fa-solid fa-paper-plane" style="color:#00a884;font-size:13px;margin-right:6px;"></i>';
+
+        item.onclick = () => executeForward(c.jid, c.name);
+        forwardChatList.appendChild(item);
+    });
+}
+
+if (forwardSearchInput) {
+    forwardSearchInput.oninput = () => renderForwardChatList(allChats);
+}
+
+if (btnCancelForward) {
+    btnCancelForward.onclick = () => {
+        forwardModal.style.display = 'none';
+        delete forwardModal.dataset.forwardMsgId;
+    };
+}
+
+async function executeForward(targetJid, targetName) {
+    const msgId = forwardModal.dataset.forwardMsgId;
+    if (!msgId) return;
+
+    const msg = currentChatMessages.find(m => m.id === msgId);
+    if (!msg) return;
+
+    forwardModal.style.display = 'none';
+    delete forwardModal.dataset.forwardMsgId;
+
+    try {
+        if (msg.msgType === 'sticker' && msg.mediaBase64) {
+            await sessionFetch('/api/messages/send-sticker', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jid: targetJid, base64: msg.mediaBase64 })
+            });
+        } else if (msg.mediaBase64) {
+            let mime = 'application/octet-stream';
+            if (msg.msgType === 'image') mime = 'image/jpeg';
+            else if (msg.msgType === 'audio') mime = 'audio/ogg';
+            await sessionFetch('/api/messages/send-media', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jid: targetJid,
+                    caption: msg.text,
+                    base64: msg.mediaBase64,
+                    mimeType: mime,
+                    fileName: msg.fileName
+                })
+            });
+        } else {
+            await sessionFetch('/api/messages/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jid: targetJid, text: msg.text })
+            });
+        }
+        showToast('Pesan diteruskan ke ' + (targetName || targetJid.split('@')[0]));
+    } catch (e) {
+        alert('Gagal meneruskan pesan: ' + e.message);
+    }
+}
 
 window.scrollToMessage = function(targetId) {
     if (!targetId) return;

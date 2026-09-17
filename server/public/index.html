@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.0">
+    <link rel="stylesheet" href="style.css?v=4.2">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -191,6 +191,46 @@
         </div>
     </div>
 
-    <script src="app.js?v=4.0"></script>
+    <!-- Floating Message Dropdown Context Menu -->
+    <div class="msg-context-menu" id="msgContextMenu" style="display: none;">
+        <div class="context-item" id="ctxReply"><i class="fa-solid fa-reply"></i> <span>Balas</span></div>
+        <div class="context-item" id="ctxForward"><i class="fa-solid fa-share"></i> <span>Teruskan</span></div>
+        <div class="context-item" id="ctxCopy"><i class="fa-regular fa-copy"></i> <span>Salin Teks</span></div>
+        <div class="context-item" id="ctxTranslate"><i class="fa-solid fa-language"></i> <span>Terjemahkan</span></div>
+        <div class="context-item" id="ctxEdit" style="display: none;"><i class="fa-solid fa-pen"></i> <span>Edit Pesan</span></div>
+    </div>
+
+    <!-- Forward Message Modal -->
+    <div class="modal-overlay" id="forwardModal" style="display: none;">
+        <div class="modal-card modal-small">
+            <h3>Teruskan Pesan Ke:</h3>
+            <div class="forward-search-box">
+                <input type="text" id="forwardSearchInput" placeholder="Cari kontak...">
+            </div>
+            <div class="forward-chat-list" id="forwardChatList"></div>
+            <div class="modal-footer">
+                <button class="btn-cancel" id="btnCancelForward">Batal</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Message Modal -->
+    <div class="modal-overlay" id="editModal" style="display: none;">
+        <div class="modal-card modal-small">
+            <h3>Edit Pesan</h3>
+            <textarea id="editMessageInput" class="edit-textarea" rows="4" placeholder="Ketik perubahan pesan..."></textarea>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
+                <button class="btn-cancel" id="btnCancelEdit">Batal</button>
+                <button class="btn-primary-action" id="btnSaveEdit">Simpan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast-notification" id="toastNotification" style="display: none;">
+        <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
+    </div>
+
+    <script src="app.js?v=4.2"></script>
 </body>
 </html>
