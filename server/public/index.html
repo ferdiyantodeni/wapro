@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.2">
+    <link rel="stylesheet" href="style.css?v=4.3">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -34,11 +34,15 @@
                 </div>
             </div>
 
-            <!-- Chat Filters (All, Unread, Groups) -->
+            <!-- Chat Filters (All, Unread, Groups) & Sorting -->
             <div class="chat-filters">
-                <button class="filter-pill active" data-filter="all">Semua</button>
-                <button class="filter-pill" data-filter="unread">Belum Dibaca</button>
-                <button class="filter-pill" data-filter="group">Grup</button>
+                <button class="filter-pill filter-tab active" data-filter="all">Semua</button>
+                <button class="filter-pill filter-tab" data-filter="unread">Belum Dibaca</button>
+                <button class="filter-pill filter-tab" data-filter="group">Grup</button>
+                <button class="filter-pill sort-pill" id="btnToggleSort" title="Klik untuk mengubah urutan (Terbaru / Abjad A-Z)">
+                    <i class="fa-solid fa-arrow-down-wide-short" id="sortIcon"></i>
+                    <span id="sortLabel">Terbaru</span>
+                </button>
             </div>
 
             <div class="chat-list" id="chatList">
@@ -231,6 +235,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=4.2"></script>
+    <script src="app.js?v=4.3"></script>
 </body>
 </html>

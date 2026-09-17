@@ -6,6 +6,7 @@ let allChats = [];
 let connectionState = 'connecting';
 let currentUser = null;
 let activeFilter = 'all'; // 'all', 'unread', 'group'
+let currentSort = 'recent'; // 'recent' or 'alphabetical'
 let stagedAttachment = null; // { base64, mimeType, fileName }
 let activeQuotedMsg = null; // Quoted message object being replied to
 let savedStickers = JSON.parse(localStorage.getItem('wapro_saved_stickers') || '[]');
@@ -54,6 +55,9 @@ const btnCancelNewChat = document.getElementById('btnCancelNewChat');
 
 // New Controls
 const filterPills = document.querySelectorAll('.filter-pill');
+const btnToggleSort = document.getElementById('btnToggleSort');
+const sortIcon = document.getElementById('sortIcon');
+const sortLabel = document.getElementById('sortLabel');
 const btnAttach = document.getElementById('btnAttach');
 const fileAttachmentInput = document.getElementById('fileAttachmentInput');
 const attachmentPreviewBar = document.getElementById('attachmentPreviewBar');
@@ -316,11 +320,38 @@ function getAvatarInitials(name) {
     return clean.slice(0, 2).toUpperCase();
 }
 
+function formatChatDisplayName(chat) {
+    if (!chat) return '';
+    let name = (chat.name || '').trim();
+    if (chat.isGroup) return name || 'Grup WhatsApp';
+
+    const jidPart = (chat.jid || '').split('@')[0];
+    const rawNum = jidPart.replace(/[^0-9]/g, '');
+
+    // If name is just the raw phone number or LID digits or empty
+    if (!name || name === rawNum || name === chat.jid || /^\d{10,}$/.test(name)) {
+        if (rawNum.startsWith('62') && rawNum.length >= 10) {
+            return `+62 ${rawNum.slice(2, 5)}-${rawNum.slice(5, 9)}-${rawNum.slice(9)}`;
+        }
+        if (rawNum.startsWith('0') && rawNum.length >= 10) {
+            return `0${rawNum.slice(1, 4)}-${rawNum.slice(4, 8)}-${rawNum.slice(8)}`;
+        }
+        if (rawNum.length > 6) return `+${rawNum}`;
+    }
+    return name || jidPart;
+}
+
 function renderChatList(chats) {
     const q = searchChatInput.value.toLowerCase().trim();
     chatListEl.innerHTML = '';
 
-    let filtered = chats;
+    // Discard empty ghost chats (no last message and no unread)
+    let filtered = (chats || []).filter(c => {
+        if (!c) return false;
+        const hasText = Boolean(c.lastMessage && c.lastMessage.trim());
+        const hasUnread = Boolean(c.unread && c.unread > 0);
+        return hasText || hasUnread;
+    });
 
     if (activeFilter === 'unread') {
         filtered = filtered.filter(c => c.unread > 0);
@@ -329,11 +360,24 @@ function renderChatList(chats) {
     }
 
     if (q) {
-        filtered = filtered.filter(c =>
-            (c.name && c.name.toLowerCase().includes(q)) ||
-            (c.lastMessage && c.lastMessage.toLowerCase().includes(q)) ||
-            c.jid.includes(q)
-        );
+        filtered = filtered.filter(c => {
+            const dName = formatChatDisplayName(c).toLowerCase();
+            const lMsg = (c.lastMessage || '').toLowerCase();
+            const jid = (c.jid || '').toLowerCase();
+            return dName.includes(q) || lMsg.includes(q) || jid.includes(q);
+        });
+    }
+
+    // Sort order: 'alphabetical' (A - Z) vs 'recent' (timestamp descending)
+    if (currentSort === 'alphabetical') {
+        filtered.sort((a, b) => {
+            const nameA = formatChatDisplayName(a).toLowerCase();
+            const nameB = formatChatDisplayName(b).toLowerCase();
+            return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        });
+    } else {
+        // default 'recent'
+        filtered.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     }
 
     if (filtered.length === 0) {
@@ -346,17 +390,18 @@ function renderChatList(chats) {
         item.className = 'chat-item' + (chat.jid === currentChatJid ? ' active' : '');
         item.onclick = () => selectChat(chat.jid);
 
-        const initials = getAvatarInitials(chat.name);
+        const displayName = formatChatDisplayName(chat);
+        const initials = getAvatarInitials(displayName);
         const unreadBadge = chat.unread > 0 ? ('<span class="unread-badge">' + chat.unread + '</span>') : '';
         const timeStr = formatTime(chat.timestamp);
         const groupIcon = chat.isGroup ? '<i class="fa-solid fa-users" style="margin-right: 6px; font-size: 12px; color: #8696a0;"></i>' : '';
-        const bgGradient = getAvatarBg(chat.jid || chat.name);
+        const bgGradient = getAvatarBg(chat.jid || displayName);
 
         item.innerHTML = 
             '<div class="chat-avatar" style="background: ' + bgGradient + ';">' + initials + '</div>' +
             '<div class="chat-info">' +
                 '<div class="chat-info-top">' +
-                    '<span class="chat-name">' + groupIcon + escapeHtml(chat.name || chat.jid.split('@')[0]) + '</span>' +
+                    '<span class="chat-name">' + groupIcon + escapeHtml(displayName) + '</span>' +
                     '<span class="chat-time">' + timeStr + '</span>' +
                 '</div>' +
                 '<div class="chat-info-bottom">' +
@@ -374,10 +419,11 @@ window.selectChat = async function(jid) {
     cancelReply();
     const chat = allChats.find(c => c.jid === jid);
 
+    const displayName = formatChatDisplayName(chat) || (jid.includes('@') ? jid.split('@')[0] : jid);
     const bgGradient = getAvatarBg(chat?.jid || jid);
     activeAvatar.style.background = bgGradient;
-    activeAvatar.textContent = getAvatarInitials(chat?.name || jid);
-    activeContactName.textContent = chat?.name || jid.split('@')[0];
+    activeAvatar.textContent = getAvatarInitials(displayName);
+    activeContactName.textContent = displayName;
     activeContactSubtitle.textContent = chat?.isGroup ? 'Grup WhatsApp' : (jid.includes('@') ? jid.split('@')[0] : 'Online');
 
     emptyChatView.style.display = 'none';
@@ -1037,13 +1083,36 @@ document.querySelectorAll('.emoji-item').forEach(el => {
 
 // Filter Pills Click
 filterPills.forEach(pill => {
+    if (pill.classList.contains('sort-pill') || pill.id === 'btnToggleSort') return;
     pill.addEventListener('click', () => {
-        filterPills.forEach(p => p.classList.remove('active'));
+        filterPills.forEach(p => {
+            if (!p.classList.contains('sort-pill')) p.classList.remove('active');
+        });
         pill.classList.add('active');
-        activeFilter = pill.getAttribute('data-filter');
+        activeFilter = pill.getAttribute('data-filter') || 'all';
         renderChatList(allChats);
     });
 });
+
+// Sort Toggle Button (Terbaru <-> Abjad A-Z)
+if (btnToggleSort) {
+    btnToggleSort.addEventListener('click', () => {
+        if (currentSort === 'recent') {
+            currentSort = 'alphabetical';
+            sortIcon.className = 'fa-solid fa-arrow-down-a-z';
+            sortLabel.textContent = 'A - Z';
+            btnToggleSort.classList.add('active');
+            btnToggleSort.title = 'Urutan: Abjad (A - Z). Klik untuk urutkan berdasarkan Terbaru';
+        } else {
+            currentSort = 'recent';
+            sortIcon.className = 'fa-solid fa-arrow-down-wide-short';
+            sortLabel.textContent = 'Terbaru';
+            btnToggleSort.classList.remove('active');
+            btnToggleSort.title = 'Urutan: Terbaru. Klik untuk urutkan berdasarkan Abjad (A - Z)';
+        }
+        renderChatList(allChats);
+    });
+}
 
 searchChatInput.addEventListener('input', () => renderChatList(allChats));
 btnSendMessage.addEventListener('click', sendMessage);

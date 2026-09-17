@@ -149,6 +149,71 @@ body {
   font-size: 14px;
 }
 
+/* Chat Filter Tabs and Sort Button */
+.chat-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: #111b21;
+  border-bottom: 1px solid rgba(134, 150, 160, 0.1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chat-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.filter-pill {
+  background-color: #202c33;
+  color: #8696a0;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.filter-pill:hover {
+  background-color: #2a3942;
+  color: #e9edef;
+}
+
+.filter-pill.active {
+  background-color: #00a884;
+  color: #111b21;
+  font-weight: 600;
+}
+
+.filter-pill.sort-pill {
+  margin-left: auto;
+  background-color: rgba(32, 44, 51, 0.8);
+  border: 1px solid rgba(134, 150, 160, 0.2);
+  color: #aebac1;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.filter-pill.sort-pill:hover {
+  background-color: #2a3942;
+  color: #00a884;
+  border-color: #00a884;
+}
+
+.filter-pill.sort-pill.active {
+  background-color: rgba(0, 168, 132, 0.15);
+  color: #00a884;
+  border-color: #00a884;
+}
+
 .chat-list {
   flex: 1;
   overflow-y: auto;

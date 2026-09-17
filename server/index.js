@@ -104,7 +104,8 @@ class WhatsAppSession {
         this.store = {
             chats: {},
             messages: {},
-            lidMap: {}
+            lidMap: {},
+            contacts: {}
         };
 
         this.loadStore();
@@ -118,6 +119,9 @@ class WhatsAppSession {
                 if (saved.messages) this.store.messages = saved.messages;
                 if (saved.lidMap) this.store.lidMap = saved.lidMap;
                 else this.store.lidMap = {};
+                if (saved.contacts) this.store.contacts = saved.contacts;
+                else this.store.contacts = {};
+                this.cleanGhostChats();
             } catch (e) {
                 console.error(`[${this.sessionId}] Error load store:`, e.message);
             }
@@ -130,6 +134,73 @@ class WhatsAppSession {
         } catch (e) {
             console.error(`[${this.sessionId}] Error save store:`, e.message);
         }
+    }
+
+    // Purge ghost/empty chat stubs synced from initial WhatsApp history
+    cleanGhostChats() {
+        let changed = false;
+        for (const [jid, chat] of Object.entries(this.store.chats)) {
+            const msgs = this.store.messages[jid] || [];
+            const isLid = jid.endsWith('@lid');
+            const hasNoRealContent = (!chat.lastMessage || chat.lastMessage.trim() === '') && msgs.length === 0 && (!chat.unread || chat.unread === 0);
+            
+            // Delete orphaned empty LIDs or empty stubs
+            if (hasNoRealContent || (isLid && msgs.length === 0)) {
+                delete this.store.chats[jid];
+                delete this.store.messages[jid];
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.saveStore();
+        }
+    }
+
+    // Get sanitized, sorted, and display-name-enriched chat list for client
+    getSanitizedChatList() {
+        this.cleanGhostChats();
+        return Object.values(this.store.chats)
+            .filter(c => {
+                const msgs = this.store.messages[c.jid] || [];
+                const hasMessage = (c.lastMessage && c.lastMessage.trim() !== '') || msgs.length > 0;
+                return hasMessage || (c.unread && c.unread > 0);
+            })
+            .map(c => {
+                const displayName = this.getContactDisplayName(c.jid);
+                return {
+                    ...c,
+                    name: displayName || c.name || c.jid.split('@')[0]
+                };
+            })
+            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    }
+
+    // Get formatted contact display name (Address book name -> Push Name -> Clean Phone Number)
+    getContactDisplayName(jid) {
+        if (!jid) return '';
+        if (jid.endsWith('@g.us')) {
+            return this.store.chats[jid]?.name || 'Grup WhatsApp';
+        }
+
+        const canonicalJid = (this.store.lidMap && this.store.lidMap[jid]) ? this.store.lidMap[jid] : jid;
+        const c = (this.store.contacts && this.store.contacts[canonicalJid]) || (this.store.contacts && this.store.contacts[jid]);
+        if (c?.name) return c.name;
+        if (c?.notify) return c.notify;
+        if (c?.verifiedName) return c.verifiedName;
+
+        const chat = this.store.chats[canonicalJid] || this.store.chats[jid];
+        if (chat?.name && !chat.name.match(/^\d{12,}$/)) {
+            return chat.name;
+        }
+
+        const num = canonicalJid.split('@')[0].replace(/[^0-9]/g, '');
+        if (num.startsWith('62') && num.length >= 10) {
+            return `+62 ${num.slice(2, 5)}-${num.slice(5, 9)}-${num.slice(9)}`;
+        }
+        if (num.startsWith('0') && num.length >= 10) {
+            return `0${num.slice(1, 4)}-${num.slice(4, 8)}-${num.slice(8)}`;
+        }
+        return num;
     }
 
     // Merge two duplicate chat histories (e.g. LID into Phone Number JID)
@@ -278,7 +349,7 @@ class WhatsAppSession {
                 sessionId: this.sessionId,
                 state: this.connectionState,
                 user: this.currentUser,
-                chats: Object.values(this.store.chats).sort((a, b) => b.timestamp - a.timestamp)
+                chats: this.getSanitizedChatList()
             });
         }
     }
@@ -302,7 +373,7 @@ class WhatsAppSession {
                 qr: this.currentQR,
                 pairingCode: this.currentPairingCode,
                 user: this.currentUser,
-                chats: Object.values(this.store.chats).sort((a, b) => b.timestamp - a.timestamp)
+                chats: this.getSanitizedChatList()
             }
         }));
     }
@@ -381,17 +452,30 @@ class WhatsAppSession {
             // History sync
             this.sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
                 if (contacts) {
+                    this.store.contacts = this.store.contacts || {};
                     for (const contact of contacts) {
                         const jid = contact.id;
-                        if (jid && contact.lid) {
-                            const pnJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+                        if (!jid) continue;
+                        const pnJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+                        const cName = contact.name || contact.notify || contact.verifiedName || '';
+
+                        this.store.contacts[pnJid] = {
+                            name: cName,
+                            notify: contact.notify || '',
+                            verifiedName: contact.verifiedName || ''
+                        };
+
+                        if (contact.lid) {
                             const lidJid = contact.lid.includes('@') ? contact.lid : `${contact.lid}@lid`;
                             this.store.lidMap = this.store.lidMap || {};
                             this.store.lidMap[lidJid] = pnJid;
                             this.store.lidMap[pnJid] = lidJid;
+                            this.store.contacts[lidJid] = this.store.contacts[pnJid];
                         }
-                        if (jid && (contact.name || contact.notify)) {
-                            const cName = contact.name || contact.notify;
+                        if (cName) {
+                            if (this.store.chats[pnJid]) {
+                                this.store.chats[pnJid].name = cName;
+                            }
                             if (this.store.chats[jid]) {
                                 this.store.chats[jid].name = cName;
                             }
@@ -403,15 +487,26 @@ class WhatsAppSession {
                     for (const chat of chats) {
                         const jid = chat.id;
                         if (!jid || jid === 'status@broadcast') continue;
+                        const ts = Number(chat.conversationTimestamp || 0) * 1000;
+                        // Skip empty ghost chats with no conversation timestamp and no unread
+                        if (!ts && !chat.unreadCount) continue;
+
                         if (!this.store.chats[jid]) {
                             this.store.chats[jid] = {
                                 jid,
-                                name: chat.name || jid.split('@')[0],
+                                name: this.getContactDisplayName(jid) || chat.name || jid.split('@')[0],
                                 isGroup: jid.endsWith('@g.us'),
                                 lastMessage: '',
-                                timestamp: Number(chat.conversationTimestamp || 0) * 1000 || Date.now(),
+                                timestamp: ts,
                                 unread: chat.unreadCount || 0
                             };
+                        } else {
+                            if (chat.name && !chat.name.match(/^\d+$/)) {
+                                this.store.chats[jid].name = chat.name;
+                            }
+                            if (ts > (this.store.chats[jid].timestamp || 0)) {
+                                this.store.chats[jid].timestamp = ts;
+                            }
                         }
                     }
                 }
@@ -419,14 +514,26 @@ class WhatsAppSession {
                 if (messages) {
                     for (const msg of messages) {
                         if (!msg.message) continue;
-                        const jid = msg.key.remoteJid;
+                        let jid = msg.key.remoteJid;
                         if (!jid || jid === 'status@broadcast') continue;
+                        if (this.store.lidMap && this.store.lidMap[jid] && this.store.lidMap[jid].endsWith('@s.whatsapp.net')) {
+                            jid = this.store.lidMap[jid];
+                        }
+
                         const fromMe = Boolean(msg.key.fromMe);
                         const text = extractMessageText(msg);
                         if (!text) continue;
 
                         const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
                         const senderName = msg.pushName || jid.split('@')[0];
+
+                        // Persist pushName to contacts if not yet registered
+                        if (msg.pushName && (!this.store.contacts[jid] || !this.store.contacts[jid].name)) {
+                            this.store.contacts[jid] = {
+                                name: msg.pushName,
+                                notify: msg.pushName
+                            };
+                        }
 
                         if (!this.store.messages[jid]) this.store.messages[jid] = [];
                         const msgObj = {
@@ -442,15 +549,18 @@ class WhatsAppSession {
                             this.store.messages[jid].push(msgObj);
                         }
 
+                        const resolvedName = this.getContactDisplayName(jid);
+
                         if (this.store.chats[jid]) {
                             if (!this.store.chats[jid].lastMessage || timestamp >= this.store.chats[jid].timestamp) {
                                 this.store.chats[jid].lastMessage = text;
                                 this.store.chats[jid].timestamp = timestamp;
                             }
+                            if (resolvedName) this.store.chats[jid].name = resolvedName;
                         } else {
                             this.store.chats[jid] = {
                                 jid,
-                                name: senderName,
+                                name: resolvedName || senderName,
                                 isGroup: jid.endsWith('@g.us'),
                                 lastMessage: text,
                                 timestamp,
@@ -460,12 +570,14 @@ class WhatsAppSession {
                     }
                 }
 
+                this.cleanGhostChats();
+                this.cleanupAndMergeLids();
                 this.saveStore();
                 this.broadcast('init', {
                     sessionId: this.sessionId,
                     state: this.connectionState,
                     user: this.currentUser,
-                    chats: Object.values(this.store.chats).sort((a, b) => b.timestamp - a.timestamp)
+                    chats: this.getSanitizedChatList()
                 });
             });
 
@@ -480,46 +592,72 @@ class WhatsAppSession {
                     sessionId: this.sessionId,
                     state: this.connectionState,
                     user: this.currentUser,
-                    chats: Object.values(this.store.chats).sort((a, b) => b.timestamp - a.timestamp)
+                    chats: this.getSanitizedChatList()
                 });
             });
 
             this.sock.ev.on('contacts.upsert', async (contacts) => {
                 this.store.lidMap = this.store.lidMap || {};
+                this.store.contacts = this.store.contacts || {};
                 for (const c of contacts) {
-                    if (c.id && c.lid) {
-                        const pnJid = c.id.includes('@') ? c.id : `${c.id}@s.whatsapp.net`;
+                    const jid = c.id;
+                    if (!jid) continue;
+                    const pnJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+                    const cName = c.name || c.notify || c.verifiedName;
+
+                    if (c.lid) {
                         const lidJid = c.lid.includes('@') ? c.lid : `${c.lid}@lid`;
                         this.store.lidMap[lidJid] = pnJid;
                         this.store.lidMap[pnJid] = lidJid;
+                        if (cName) {
+                            this.store.contacts[lidJid] = { name: cName, notify: c.notify || '', verifiedName: c.verifiedName || '' };
+                        }
                     }
-                    if (c.id && (c.name || c.notify)) {
-                        const name = c.name || c.notify;
-                        if (this.store.chats[c.id]) {
-                            this.store.chats[c.id].name = name;
+                    if (cName) {
+                        this.store.contacts[pnJid] = { name: cName, notify: c.notify || '', verifiedName: c.verifiedName || '' };
+                        if (this.store.chats[pnJid]) {
+                            this.store.chats[pnJid].name = cName;
+                        }
+                        if (this.store.chats[jid]) {
+                            this.store.chats[jid].name = cName;
                         }
                     }
                 }
                 await this.cleanupAndMergeLids();
+                this.cleanGhostChats();
+                this.saveStore();
             });
 
             this.sock.ev.on('contacts.update', async (updates) => {
                 this.store.lidMap = this.store.lidMap || {};
+                this.store.contacts = this.store.contacts || {};
                 for (const c of updates) {
-                    if (c.id && c.lid) {
-                        const pnJid = c.id.includes('@') ? c.id : `${c.id}@s.whatsapp.net`;
+                    const jid = c.id;
+                    if (!jid) continue;
+                    const pnJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+                    const cName = c.name || c.notify || c.verifiedName;
+
+                    if (c.lid) {
                         const lidJid = c.lid.includes('@') ? c.lid : `${c.lid}@lid`;
                         this.store.lidMap[lidJid] = pnJid;
                         this.store.lidMap[pnJid] = lidJid;
+                        if (cName) {
+                            this.store.contacts[lidJid] = { name: cName, notify: c.notify || '', verifiedName: c.verifiedName || '' };
+                        }
                     }
-                    if (c.id && (c.name || c.notify)) {
-                        const name = c.name || c.notify;
-                        if (this.store.chats[c.id]) {
-                            this.store.chats[c.id].name = name;
+                    if (cName) {
+                        this.store.contacts[pnJid] = { name: cName, notify: c.notify || '', verifiedName: c.verifiedName || '' };
+                        if (this.store.chats[pnJid]) {
+                            this.store.chats[pnJid].name = cName;
+                        }
+                        if (this.store.chats[jid]) {
+                            this.store.chats[jid].name = cName;
                         }
                     }
                 }
                 await this.cleanupAndMergeLids();
+                this.cleanGhostChats();
+                this.saveStore();
             });
 
             // Listen for message status updates (e.g. read receipts / centang biru)
@@ -630,6 +768,16 @@ class WhatsAppSession {
                     const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
                     const senderName = msg.pushName || jid.split('@')[0];
 
+                    if (msg.pushName) {
+                        this.store.contacts = this.store.contacts || {};
+                        if (!this.store.contacts[jid] || !this.store.contacts[jid].name) {
+                            this.store.contacts[jid] = {
+                                name: msg.pushName,
+                                notify: msg.pushName
+                            };
+                        }
+                    }
+
                     if (!this.store.messages[jid]) this.store.messages[jid] = [];
                     const msgObj = {
                         id: msg.key.id,
@@ -663,7 +811,8 @@ class WhatsAppSession {
                             }
                         }
                     } else {
-                        chatName = chatName || senderName;
+                        const resolved = this.getContactDisplayName(jid);
+                        chatName = resolved || chatName || senderName;
                     }
 
                     const currentUnread = (this.store.chats[jid]?.unread || 0) + (fromMe ? 0 : 1);
@@ -818,8 +967,7 @@ app.post('/api/pair', async (req, res) => {
 app.get('/api/chats', async (req, res) => {
     const s = req.sessionInstance;
     await s.cleanupAndMergeLids();
-    const list = Object.values(s.store.chats).sort((a, b) => b.timestamp - a.timestamp);
-    res.json(list);
+    res.json(s.getSanitizedChatList());
 });
 
 // 4. Get Messages for a JID
