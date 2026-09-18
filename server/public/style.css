@@ -2154,6 +2154,83 @@ body {
   flex-shrink: 0;
 }
 
+/* Edit Modal Image Attachment */
+#btnEditInsertImage:hover {
+  background-color: rgba(0, 168, 132, 0.15) !important;
+  color: #00a884 !important;
+  border-color: #00a884 !important;
+}
 
+.edit-image-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #111b21;
+  border: 1px solid #2a3942;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  animation: fadeInModal 0.2s ease;
+}
 
+.edit-image-thumb-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #202c33;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
 
+.edit-image-thumb-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.edit-image-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  overflow: hidden;
+}
+
+#editImageName {
+  font-size: 13.5px;
+  color: #e9edef;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edit-image-hint {
+  font-size: 11.5px;
+  color: #8696a0;
+}
+
+.btn-remove-edit-image {
+  background: transparent;
+  border: none;
+  color: #8696a0;
+  cursor: pointer;
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-remove-edit-image:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}

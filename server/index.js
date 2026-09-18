@@ -139,6 +139,20 @@ class WhatsAppSession {
         this.wsClients = new Set();
         this.isStarting = false;
 
+        this.msgRetryCounterCache = {
+            _cache: new Map(),
+            get(key) { return this._cache.get(key); },
+            set(key, val) {
+                this._cache.set(key, val);
+                if (this._cache.size > 2000) {
+                    const first = this._cache.keys().next().value;
+                    this._cache.delete(first);
+                }
+            },
+            del(key) { this._cache.delete(key); },
+            flushAll() { this._cache.clear(); }
+        };
+
         this.store = {
             chats: {},
             messages: {},
@@ -442,6 +456,60 @@ class WhatsAppSession {
         }));
     }
 
+    async getMessageFromStore(key) {
+        if (!key) return undefined;
+        try {
+            const jid = key.remoteJid;
+            let list = this.store.messages[jid];
+            if (!list && this.store.lidMap && this.store.lidMap[jid]) {
+                list = this.store.messages[this.store.lidMap[jid]];
+            }
+            if (!list) {
+                for (const msgs of Object.values(this.store.messages || {})) {
+                    const found = msgs.find(m => m.id === key.id);
+                    if (found) {
+                        list = [found];
+                        break;
+                    }
+                }
+            }
+
+            const m = list ? list.find(item => item.id === key.id) : null;
+            if (!m) return undefined;
+
+            if (m.rawMessage) {
+                return m.rawMessage;
+            }
+
+            if (m.msgType === 'image' && m.mediaBase64) {
+                return {
+                    imageMessage: {
+                        caption: m.text || ''
+                    }
+                };
+            }
+
+            if (m.msgType === 'contact' && m.contactInfo) {
+                const cName = m.contactInfo.name || 'Kontak';
+                const cWaid = m.contactInfo.waid || '';
+                const vcard = 'BEGIN:VCARD\nVERSION:3.0\nFN:' + cName + '\nTEL;waid=' + cWaid + ':+' + cWaid + '\nEND:VCARD';
+                return {
+                    contactsArrayMessage: {
+                        displayName: cName,
+                        contacts: [{ displayName: cName, vcard }]
+                    }
+                };
+            }
+
+            return {
+                conversation: m.text || ''
+            };
+        } catch (err) {
+            console.error(`[${this.sessionId}] Error in getMessageFromStore:`, err.message);
+            return undefined;
+        }
+    }
+
     async startWhatsApp() {
         if (this.isStarting) return;
         this.isStarting = true;
@@ -460,7 +528,11 @@ class WhatsAppSession {
                 auth: state,
                 browser: ['WaPro Desktop', 'Chrome', '124.0.0.0'],
                 syncFullHistory: true,
-                generateHighQualityLinkPreview: true
+                generateHighQualityLinkPreview: true,
+                msgRetryCounterCache: this.msgRetryCounterCache,
+                getMessage: async (key) => this.getMessageFromStore(key),
+                keepAliveIntervalMs: 25000,
+                defaultQueryTimeoutMs: undefined
             });
 
             this.sock.ev.on('creds.update', saveCreds);
@@ -619,7 +691,8 @@ class WhatsAppSession {
                             contactInfo,
                             timestamp,
                             senderName,
-                            status: fromMe ? 'SENT' : 'RECEIVED'
+                            status: fromMe ? 'SENT' : 'RECEIVED',
+                            rawMessage: msg.message
                         };
 
                         if (!this.store.messages[jid].some(m => m.id === msgObj.id)) {
@@ -899,7 +972,8 @@ class WhatsAppSession {
                         senderJid: msg.key.participant || (fromMe ? (this.currentUser?.id ? jidNormalizedUser(this.currentUser.id) : '') : jid),
                         participantJid: msg.key.participant || undefined,
                         quoted,
-                        status: fromMe ? 'SENT' : 'RECEIVED'
+                        status: fromMe ? 'SENT' : 'RECEIVED',
+                        rawMessage: msg.message
                     };
 
                     if (this.store.messages[jid].some(m => m.id === msgObj.id)) continue;
@@ -1161,7 +1235,8 @@ app.post('/api/messages/send', async (req, res) => {
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
             quoted: quotedInfo,
-            status: 'SENT'
+            status: 'SENT',
+            rawMessage: sent.message
         };
         s.store.messages[canonicalJid].push(msgObj);
 
@@ -1243,7 +1318,8 @@ app.post('/api/messages/send-media', async (req, res) => {
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
             quoted: quotedInfo,
-            status: 'SENT'
+            status: 'SENT',
+            rawMessage: sent.message
         };
 
         if (!s.store.messages[canonicalJid]) s.store.messages[canonicalJid] = [];
@@ -1303,7 +1379,8 @@ app.post('/api/messages/send-sticker', async (req, res) => {
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
             quoted: quotedInfo,
-            status: 'SENT'
+            status: 'SENT',
+            rawMessage: sent.message
         };
         s.store.messages[canonicalJid].push(msgObj);
 
@@ -1387,7 +1464,8 @@ app.post('/api/messages/send-contact', async (req, res) => {
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
             quoted: quotedInfo,
-            status: 'SENT'
+            status: 'SENT',
+            rawMessage: sent.message
         };
         s.store.messages[canonicalJid].push(msgObj);
 
@@ -1435,8 +1513,8 @@ app.get('/api/avatar/:jid', async (req, res) => {
 // 5e. Edit Sent Message
 app.post('/api/messages/edit', async (req, res) => {
     const s = req.sessionInstance;
-    let { jid, id, text } = req.body;
-    if (!jid || !id || !text) return res.status(400).json({ error: 'JID, ID pesan, dan teks baru harus diisi' });
+    let { jid, id, text, imageBase64, removeImage } = req.body;
+    if (!jid || !id) return res.status(400).json({ error: 'JID dan ID pesan harus diisi' });
 
     try {
         if (!s.sock || s.connectionState !== 'open') {
@@ -1449,22 +1527,64 @@ app.post('/api/messages/edit', async (req, res) => {
             id: id
         };
 
-        await s.sock.sendMessage(jid, {
-            text,
-            edit: editKey
-        });
+        // Try sending WhatsApp protocol edit message
+        try {
+            await s.sock.sendMessage(jid, {
+                text: text || '',
+                edit: editKey
+            });
+        } catch (sockErr) {
+            console.warn(`[${s.sessionId}] Warning sock.sendMessage edit:`, sockErr.message);
+        }
+
+        let updatedMsgType = 'text';
+        let updatedMedia = null;
 
         if (s.store.messages[jid]) {
             const target = s.store.messages[jid].find(m => m.id === id);
             if (target) {
-                target.text = text;
+                target.text = text || '';
                 target.isEdited = true;
+
+                if (imageBase64) {
+                    target.msgType = 'image';
+                    target.mediaBase64 = imageBase64;
+                    target.rawMessage = {
+                        imageMessage: {
+                            caption: text || ''
+                        }
+                    };
+                } else if (removeImage) {
+                    target.msgType = 'text';
+                    target.mediaBase64 = null;
+                    target.rawMessage = {
+                        conversation: text || ''
+                    };
+                } else if (target.msgType === 'image') {
+                    if (target.rawMessage?.imageMessage) {
+                        target.rawMessage.imageMessage.caption = text || '';
+                    }
+                } else {
+                    target.rawMessage = {
+                        conversation: text || ''
+                    };
+                }
+
+                updatedMsgType = target.msgType || 'text';
+                updatedMedia = target.mediaBase64 || null;
                 s.saveStore();
             }
         }
 
-        s.broadcast('message_edited', { jid, id, text });
-        res.json({ success: true, id, text });
+        s.broadcast('message_edited', {
+            jid,
+            id,
+            text: text || '',
+            msgType: updatedMsgType,
+            mediaBase64: updatedMedia
+        });
+
+        res.json({ success: true, id, text, msgType: updatedMsgType, mediaBase64: updatedMedia });
     } catch (e) {
         console.error(`[${s.sessionId}] Error editing message:`, e);
         res.status(500).json({ error: e.message });

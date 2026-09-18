@@ -113,6 +113,14 @@ const btnCloseEditModal = document.getElementById('btnCloseEditModal');
 const btnEditEmojiToggle = document.getElementById('btnEditEmojiToggle');
 const editEmojiTray = document.getElementById('editEmojiTray');
 const btnEditFormatAI = document.getElementById('btnEditFormatAI');
+const btnEditInsertImage = document.getElementById('btnEditInsertImage');
+const editImageFileInput = document.getElementById('editImageFileInput');
+const editImagePreviewBar = document.getElementById('editImagePreviewBar');
+const editImageThumb = document.getElementById('editImageThumb');
+const editImageName = document.getElementById('editImageName');
+const btnRemoveEditImage = document.getElementById('btnRemoveEditImage');
+let stagedEditImage = null;
+let removeEditImage = false;
 const btnCancelEdit = document.getElementById('btnCancelEdit');
 const btnSaveEdit = document.getElementById('btnSaveEdit');
 const toastNotification = document.getElementById('toastNotification');
@@ -231,24 +239,20 @@ function handleWsEvent(evt, data) {
             if (m) m.status = status;
         }
     } else if (evt === 'message_edited') {
-        const { jid, id, text } = data;
+        const { jid, id, text, msgType, mediaBase64 } = data;
         if (currentChatJid === jid) {
-            const bubble = document.querySelector('.message-bubble[data-id="' + id + '"]');
-            if (bubble) {
-                const textEl = bubble.querySelector('.message-text');
-                if (textEl) textEl.innerHTML = renderFormattedWhatsAppText(text);
-                const timeEl = bubble.querySelector('.message-time');
-                if (timeEl && !bubble.querySelector('.message-edited-badge')) {
-                    const badge = document.createElement('span');
-                    badge.className = 'message-edited-badge';
-                    badge.textContent = '(diedit)';
-                    timeEl.prepend(badge);
-                }
-            }
             const m = currentChatMessages.find(msg => msg.id === id);
             if (m) {
                 m.text = text;
                 m.isEdited = true;
+                if (mediaBase64 !== undefined) m.mediaBase64 = mediaBase64;
+                if (msgType) m.msgType = msgType;
+
+                const oldBubble = document.querySelector('.message-bubble[data-id="' + id + '"]');
+                if (oldBubble) {
+                    const newBubble = createBubbleElement(m);
+                    oldBubble.replaceWith(newBubble);
+                }
             }
         }
     } else if (evt === 'new_message') {
@@ -603,10 +607,7 @@ window.downloadImageDirect = function(base64, e, fileName) {
     showToast('Mengunduh gambar... 📥');
 };
 
-function appendMessage(m) {
-    if (m.id && document.querySelector('.message-bubble[data-id="' + m.id + '"]')) {
-        return;
-    }
+function createBubbleElement(m) {
     const isOut = m.fromMe;
     const isSticker = m.msgType === 'sticker' && m.mediaBase64;
     const bubble = document.createElement('div');
@@ -685,6 +686,14 @@ function appendMessage(m) {
             tickIcon +
         '</div>';
 
+    return bubble;
+}
+
+function appendMessage(m) {
+    if (m.id && document.querySelector('.message-bubble[data-id="' + m.id + '"]')) {
+        return;
+    }
+    const bubble = createBubbleElement(m);
     messagesContainer.appendChild(bubble);
 }
 
@@ -862,22 +871,101 @@ if (ctxEdit) {
         editMessageInput.dataset.editMsgId = msg.id;
         if (editEmojiTray) editEmojiTray.style.display = 'none';
         if (btnEditEmojiToggle) btnEditEmojiToggle.classList.remove('active');
+
+        // Stage existing image if message has one
+        if (msg.msgType === 'image' && msg.mediaBase64) {
+            stagedEditImage = msg.mediaBase64;
+            removeEditImage = false;
+            if (editImageThumb) editImageThumb.src = msg.mediaBase64;
+            if (editImageName) editImageName.textContent = msg.fileName || 'Gambar Terlampir';
+            if (editImagePreviewBar) editImagePreviewBar.style.display = 'flex';
+        } else {
+            stagedEditImage = null;
+            removeEditImage = false;
+            if (editImageThumb) editImageThumb.src = '';
+            if (editImagePreviewBar) editImagePreviewBar.style.display = 'none';
+        }
+        if (editImageFileInput) editImageFileInput.value = '';
+
         editMessageInput.focus();
     };
 }
 
+function resetEditModalState() {
+    editModal.style.display = 'none';
+    delete editMessageInput.dataset.editMsgId;
+    stagedEditImage = null;
+    removeEditImage = false;
+    if (editImageThumb) editImageThumb.src = '';
+    if (editImageFileInput) editImageFileInput.value = '';
+    if (editImagePreviewBar) editImagePreviewBar.style.display = 'none';
+}
+
 if (btnCloseEditModal) {
-    btnCloseEditModal.onclick = () => {
-        editModal.style.display = 'none';
-        delete editMessageInput.dataset.editMsgId;
-    };
+    btnCloseEditModal.onclick = resetEditModalState;
 }
 
 if (btnCancelEdit) {
-    btnCancelEdit.onclick = () => {
-        editModal.style.display = 'none';
-        delete editMessageInput.dataset.editMsgId;
+    btnCancelEdit.onclick = resetEditModalState;
+}
+
+// Insert / Change Image in Edit Modal
+if (btnEditInsertImage && editImageFileInput) {
+    btnEditInsertImage.onclick = () => {
+        editImageFileInput.click();
     };
+
+    editImageFileInput.onchange = (e) => {
+        if (e.target.files && e.target.files[0]) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                stagedEditImage = ev.target.result;
+                removeEditImage = false;
+                if (editImageThumb) editImageThumb.src = ev.target.result;
+                if (editImageName) editImageName.textContent = file.name || 'Gambar';
+                if (editImagePreviewBar) editImagePreviewBar.style.display = 'flex';
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+}
+
+// Remove Image from Edit Modal
+if (btnRemoveEditImage) {
+    btnRemoveEditImage.onclick = () => {
+        stagedEditImage = null;
+        removeEditImage = true;
+        if (editImageThumb) editImageThumb.src = '';
+        if (editImageFileInput) editImageFileInput.value = '';
+        if (editImagePreviewBar) editImagePreviewBar.style.display = 'none';
+    };
+}
+
+// Support Ctrl+V paste image directly inside editMessageInput
+if (editMessageInput) {
+    editMessageInput.addEventListener('paste', (e) => {
+        const items = (e.clipboardData || window.clipboardData)?.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        stagedEditImage = ev.target.result;
+                        removeEditImage = false;
+                        if (editImageThumb) editImageThumb.src = ev.target.result;
+                        if (editImageName) editImageName.textContent = file.name || 'Screenshot.png';
+                        if (editImagePreviewBar) editImagePreviewBar.style.display = 'flex';
+                        showToast('Gambar ditempel ke Edit Pesan 🖼️');
+                    };
+                    reader.readAsDataURL(file);
+                    break;
+                }
+            }
+        }
+    });
 }
 
 if (btnEditEmojiToggle) {
@@ -960,7 +1048,12 @@ if (btnSaveEdit) {
     btnSaveEdit.onclick = async () => {
         const msgId = editMessageInput.dataset.editMsgId;
         const newText = editMessageInput.value.trim();
-        if (!msgId || !newText || !currentChatJid) return;
+        if (!msgId || !currentChatJid) return;
+
+        if (!newText && !stagedEditImage) {
+            alert('Pesan tidak boleh kosong!');
+            return;
+        }
 
         btnSaveEdit.disabled = true;
         btnSaveEdit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
@@ -972,13 +1065,14 @@ if (btnSaveEdit) {
                 body: JSON.stringify({
                     jid: currentChatJid,
                     id: msgId,
-                    text: newText
+                    text: newText,
+                    imageBase64: stagedEditImage,
+                    removeImage: removeEditImage
                 })
             });
             const result = await res.json();
             if (result.success) {
-                editModal.style.display = 'none';
-                delete editMessageInput.dataset.editMsgId;
+                resetEditModalState();
                 showToast('Pesan berhasil diperbarui!');
             } else {
                 alert('Gagal mengedit pesan: ' + (result.error || 'WhatsApp membatasi pengeditan pesan maksimal 15 menit setelah dikirim.'));

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=4.8">
+    <link rel="stylesheet" href="style.css?v=4.9">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -230,11 +230,15 @@
                 <button class="btn-modal-close" id="btnCloseEditModal" title="Tutup"><i class="fa-solid fa-xmark"></i></button>
             </div>
             
-            <!-- Edit Tools (Emoji, AI Formatter, Quick Format) -->
+            <!-- Edit Tools (Emoji, Gambar, AI Formatter, Quick Format) -->
             <div class="edit-toolbar">
                 <button type="button" class="btn-toolbar-tool" id="btnEditEmojiToggle" title="Buka / Tutup Pilihan Emoji">
                     <i class="fa-regular fa-face-smile"></i> Emoji
                 </button>
+                <button type="button" class="btn-toolbar-tool" id="btnEditInsertImage" title="Sisipkan / Ganti Gambar">
+                    <i class="fa-regular fa-image"></i> Gambar
+                </button>
+                <input type="file" id="editImageFileInput" accept="image/*" style="display: none;">
                 <button type="button" class="btn-toolbar-tool" id="btnEditFormatAI" title="Rapiin Format AI (Markdown ke WhatsApp)">
                     <i class="fa-solid fa-wand-magic-sparkles"></i> Rapiin Format AI
                 </button>
@@ -245,6 +249,20 @@
                 <div class="edit-toolbar-separator"></div>
                 <button type="button" class="btn-toolbar-quick btn-toolbar-list" data-list="bullet" title="Format Blok: Auto Bullet (•)"><i class="fa-solid fa-list-ul"></i> Bullet</button>
                 <button type="button" class="btn-toolbar-quick btn-toolbar-list" data-list="number" title="Format Blok: Auto Numbering (1, 2, 3...)"><i class="fa-solid fa-list-ol"></i> Nomor</button>
+            </div>
+
+            <!-- Image Preview inside Edit Modal -->
+            <div class="edit-image-preview-bar" id="editImagePreviewBar" style="display: none;">
+                <div class="edit-image-thumb-wrapper">
+                    <img id="editImageThumb" src="" alt="Pratinjau Gambar">
+                </div>
+                <div class="edit-image-info">
+                    <span id="editImageName">gambar.jpg</span>
+                    <span class="edit-image-hint">Gambar ini akan dilampirkan pada pesan</span>
+                </div>
+                <button type="button" class="btn-remove-edit-image" id="btnRemoveEditImage" title="Hapus Gambar Lampiran">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
             </div>
 
             <!-- Emoji Tray inside Edit Modal -->
@@ -350,6 +368,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=4.8"></script>
+    <script src="app.js?v=4.9"></script>
 </body>
 </html>
