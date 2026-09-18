@@ -199,6 +199,24 @@ class WhatsAppSession {
                     }
                 }
 
+                // Clean up historical group messages where senderName was saved as the group ID
+                for (const [chatJid, msgs] of Object.entries(this.store.messages || {})) {
+                    if (chatJid.endsWith('@g.us') && Array.isArray(msgs)) {
+                        const groupId = chatJid.split('@')[0];
+                        for (const m of msgs) {
+                            if (!m.fromMe && (m.senderName === groupId || m.senderName === 'Grup' || !m.senderName || /^\d{15,}$/.test(m.senderName))) {
+                                const pJid = m.participantJid || m.senderJid;
+                                if (pJid && !pJid.endsWith('@g.us')) {
+                                    const resolved = this.resolveParticipantName(pJid, null);
+                                    if (resolved && resolved !== groupId) {
+                                        m.senderName = resolved;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 this.cleanGhostChats();
             } catch (e) {
                 console.error(`[${this.sessionId}] Error load store:`, e.message);
@@ -279,6 +297,63 @@ class WhatsAppSession {
             return `0${num.slice(1, 4)}-${num.slice(4, 8)}-${num.slice(8)}`;
         }
         return num;
+    }
+
+    // Resolve participant display name in group chats
+    resolveParticipantName(participantJid, pushName = null) {
+        if (!participantJid) return '';
+        const normJid = jidNormalizedUser(participantJid);
+
+        if (pushName && typeof pushName === 'string' && pushName.trim()) {
+            const cleanPush = pushName.trim();
+            this.store.contacts = this.store.contacts || {};
+            this.store.contacts[normJid] = {
+                ...(this.store.contacts[normJid] || {}),
+                name: cleanPush,
+                notify: cleanPush
+            };
+            if (participantJid !== normJid) {
+                this.store.contacts[participantJid] = this.store.contacts[normJid];
+            }
+            return cleanPush;
+        }
+
+        const c = (this.store.contacts && (this.store.contacts[normJid] || this.store.contacts[participantJid]));
+        if (c?.name && !c.name.match(/^\d{10,}$/)) return c.name;
+        if (c?.notify) return c.notify;
+        if (c?.verifiedName) return c.verifiedName;
+
+        if (this.store.lidMap) {
+            const mapped = this.store.lidMap[normJid] || this.store.lidMap[participantJid];
+            if (mapped) {
+                const mc = this.store.contacts && (this.store.contacts[mapped] || this.store.contacts[jidNormalizedUser(mapped)]);
+                if (mc?.name && !mc.name.match(/^\d{10,}$/)) return mc.name;
+                if (mc?.notify) return mc.notify;
+                if (mc?.verifiedName) return mc.verifiedName;
+                const mNum = mapped.split('@')[0].replace(/[^0-9]/g, '');
+                if (mNum.startsWith('62') && mNum.length >= 10) {
+                    return `+62 ${mNum.slice(2, 5)}-${mNum.slice(5, 9)}-${mNum.slice(9)}`;
+                }
+                if (mNum.startsWith('0') && mNum.length >= 10) {
+                    return `0${mNum.slice(1, 4)}-${mNum.slice(4, 8)}-${mNum.slice(8)}`;
+                }
+                if (mNum.length >= 7) return `+${mNum}`;
+            }
+        }
+
+        const num = normJid.split('@')[0].replace(/[^0-9]/g, '');
+        if (normJid.endsWith('@s.whatsapp.net')) {
+            if (num.startsWith('62') && num.length >= 10) {
+                return `+62 ${num.slice(2, 5)}-${num.slice(5, 9)}-${num.slice(9)}`;
+            }
+            if (num.startsWith('0') && num.length >= 10) {
+                return `0${num.slice(1, 4)}-${num.slice(4, 8)}-${num.slice(8)}`;
+            }
+            if (num.length >= 7) return `+${num}`;
+        }
+
+        if (c?.name) return c.name;
+        return num || normJid.split('@')[0];
     }
 
     // Merge two duplicate chat histories (e.g. LID into Phone Number JID)
@@ -682,11 +757,29 @@ class WhatsAppSession {
                             contactInfo = (mContent.contactsArrayMessage.contacts || []).map(c => parseVCard(c.displayName, c.vcard));
                         }
 
-                        const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
-                        const senderName = msg.pushName || jid.split('@')[0];
+                        const isGroup = jid.endsWith('@g.us');
+                        const participantJid = msg.key.participant || msg.participant || null;
+                        const contextInfo = mContent?.extendedTextMessage?.contextInfo ||
+                                            mContent?.imageMessage?.contextInfo ||
+                                            mContent?.videoMessage?.contextInfo ||
+                                            mContent?.documentMessage?.contextInfo ||
+                                            mContent?.audioMessage?.contextInfo ||
+                                            mContent?.stickerMessage?.contextInfo;
+                        const mentionedJids = contextInfo?.mentionedJid || [];
 
-                        // Persist pushName to contacts if not yet registered
-                        if (msg.pushName && (!this.store.contacts[jid] || !this.store.contacts[jid].name)) {
+                        const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
+                        
+                        let senderName = 'Saya';
+                        if (fromMe) {
+                            senderName = this.currentUser?.name || 'Saya';
+                        } else if (isGroup && participantJid) {
+                            senderName = this.resolveParticipantName(participantJid, msg.pushName);
+                        } else {
+                            senderName = msg.pushName || this.getContactDisplayName(jid) || jid.split('@')[0];
+                        }
+
+                        // Persist pushName to contacts if not yet registered (for 1-on-1 chats)
+                        if (msg.pushName && !isGroup && (!this.store.contacts[jid] || !this.store.contacts[jid].name)) {
                             this.store.contacts[jid] = {
                                 name: msg.pushName,
                                 notify: msg.pushName
@@ -702,6 +795,9 @@ class WhatsAppSession {
                             contactInfo,
                             timestamp,
                             senderName,
+                            senderJid: participantJid || (fromMe ? (this.currentUser?.id ? jidNormalizedUser(this.currentUser.id) : '') : jid),
+                            participantJid: participantJid || undefined,
+                            mentionedJids,
                             status: fromMe ? 'SENT' : 'RECEIVED',
                             rawMessage: msg.message
                         };
@@ -954,10 +1050,22 @@ class WhatsAppSession {
                         };
                     }
 
-                    const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
-                    const senderName = msg.pushName || jid.split('@')[0];
+                    const isGroup = jid.endsWith('@g.us') || (rawJid && rawJid.endsWith('@g.us'));
+                    const participantJid = msg.key.participant || msg.participant || null;
+                    const mentionedJids = contextInfo?.mentionedJid || [];
 
-                    if (msg.pushName) {
+                    const timestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000)) * 1000;
+
+                    let senderName = 'Saya';
+                    if (fromMe) {
+                        senderName = this.currentUser?.name || 'Saya';
+                    } else if (isGroup && participantJid) {
+                        senderName = this.resolveParticipantName(participantJid, msg.pushName);
+                    } else {
+                        senderName = msg.pushName || this.getContactDisplayName(jid) || jid.split('@')[0];
+                    }
+
+                    if (msg.pushName && !isGroup) {
                         this.store.contacts = this.store.contacts || {};
                         if (!this.store.contacts[jid] || !this.store.contacts[jid].name) {
                             this.store.contacts[jid] = {
@@ -980,9 +1088,10 @@ class WhatsAppSession {
                         contactInfo,
                         timestamp,
                         senderName,
-                        senderJid: msg.key.participant || (fromMe ? (this.currentUser?.id ? jidNormalizedUser(this.currentUser.id) : '') : jid),
-                        participantJid: msg.key.participant || undefined,
+                        senderJid: participantJid || (fromMe ? (this.currentUser?.id ? jidNormalizedUser(this.currentUser.id) : '') : jid),
+                        participantJid: participantJid || undefined,
                         quoted,
+                        mentionedJids,
                         status: fromMe ? 'SENT' : 'RECEIVED',
                         rawMessage: msg.message
                     };
@@ -1173,6 +1282,53 @@ app.get('/api/messages/:jid', async (req, res) => {
     res.json(msgs);
 });
 
+// 4b. Get Group Participants for Mentions
+app.get('/api/groups/:jid/participants', async (req, res) => {
+    const s = req.sessionInstance;
+    const jid = req.params.jid;
+    if (!jid || !jid.endsWith('@g.us')) {
+        return res.json([]);
+    }
+
+    try {
+        if (!s.sock || s.connectionState !== 'open') {
+            return res.json([]);
+        }
+
+        const meta = await s.sock.groupMetadata(jid);
+        if (!meta || !meta.participants) {
+            return res.json([]);
+        }
+
+        if (meta.subject && s.store.chats[jid]) {
+            s.store.chats[jid].name = meta.subject;
+        }
+
+        const participants = [];
+        for (const p of meta.participants) {
+            const pJid = p.id;
+            const normJid = jidNormalizedUser(pJid);
+            const isMe = Boolean(s.currentUser?.id && (normJid === jidNormalizedUser(s.currentUser.id)));
+            const displayName = isMe ? 'Anda' : s.resolveParticipantName(normJid, null);
+            const phone = normJid.split('@')[0];
+
+            participants.push({
+                jid: normJid,
+                rawJid: pJid,
+                name: displayName || phone,
+                phone: phone.startsWith('62') ? `+62 ${phone.slice(2, 5)}-${phone.slice(5, 9)}-${phone.slice(9)}` : (phone ? `+${phone}` : ''),
+                admin: p.admin || null,
+                isMe
+            });
+        }
+
+        res.json(participants);
+    } catch (e) {
+        console.error(`[${s.sessionId}] Error fetching group participants for ${jid}:`, e.message);
+        res.json([]);
+    }
+});
+
 // Helper to build quoted message payload for Baileys
 function buildQuotedOptions(s, jid, quotedMsgId) {
     if (!quotedMsgId) return { quotedOptions: undefined, quotedInfo: null };
@@ -1210,7 +1366,7 @@ function buildQuotedOptions(s, jid, quotedMsgId) {
 // 5. Send Message
 app.post('/api/messages/send', async (req, res) => {
     const s = req.sessionInstance;
-    let { jid, text, quotedMsgId } = req.body;
+    let { jid, text, quotedMsgId, mentions } = req.body;
     if (!jid || !text) return res.status(400).json({ error: 'JID dan teks pesan harus diisi' });
 
     if (!jid.includes('@')) {
@@ -1227,7 +1383,13 @@ app.post('/api/messages/send', async (req, res) => {
         const canonicalJid = await s.resolveCanonicalJid(jid);
         const targetJid = canonicalJid || jid;
         const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
-        const sent = await s.sock.sendMessage(targetJid, { text }, quotedOptions);
+
+        const msgPayload = { text };
+        if (Array.isArray(mentions) && mentions.length > 0) {
+            msgPayload.mentions = mentions;
+        }
+
+        const sent = await s.sock.sendMessage(targetJid, msgPayload, quotedOptions);
         const timestamp = Date.now();
 
         try {
@@ -1247,6 +1409,7 @@ app.post('/api/messages/send', async (req, res) => {
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
             quoted: quotedInfo,
+            mentionedJids: Array.isArray(mentions) ? mentions : [],
             status: 'SENT',
             rawMessage: sent.message
         };
@@ -1280,7 +1443,7 @@ app.post('/api/messages/send', async (req, res) => {
 // 5b. Send Media
 app.post('/api/messages/send-media', async (req, res) => {
     const s = req.sessionInstance;
-    let { jid, caption, base64, mimeType, fileName, quotedMsgId } = req.body;
+    let { jid, caption, base64, mimeType, fileName, quotedMsgId, mentions } = req.body;
     if (!jid || !base64) return res.status(400).json({ error: 'JID dan file base64 harus diisi' });
 
     if (!jid.includes('@')) {
@@ -1302,21 +1465,31 @@ app.post('/api/messages/send-media', async (req, res) => {
         let sent;
         let msgType = 'document';
 
+        const hasMentions = Array.isArray(mentions) && mentions.length > 0;
+
         if ((mimeType || '').startsWith('image/')) {
             msgType = 'image';
-            sent = await s.sock.sendMessage(targetJid, { image: buffer, caption: caption || '' }, quotedOptions);
+            const payload = { image: buffer, caption: caption || '' };
+            if (hasMentions) payload.mentions = mentions;
+            sent = await s.sock.sendMessage(targetJid, payload, quotedOptions);
         } else if ((mimeType || '').startsWith('audio/')) {
             msgType = 'audio';
-            sent = await s.sock.sendMessage(targetJid, { audio: buffer, mimetype: mimeType || 'audio/mp4' }, quotedOptions);
+            const payload = { audio: buffer, mimetype: mimeType || 'audio/mp4' };
+            if (hasMentions) payload.mentions = mentions;
+            sent = await s.sock.sendMessage(targetJid, payload, quotedOptions);
         } else if ((mimeType || '').startsWith('video/')) {
             msgType = 'video';
-            sent = await s.sock.sendMessage(targetJid, { video: buffer, caption: caption || '' }, quotedOptions);
+            const payload = { video: buffer, caption: caption || '' };
+            if (hasMentions) payload.mentions = mentions;
+            sent = await s.sock.sendMessage(targetJid, payload, quotedOptions);
         } else {
-            sent = await s.sock.sendMessage(targetJid, {
+            const payload = {
                 document: buffer,
                 mimetype: mimeType || 'application/octet-stream',
                 fileName: fileName || 'file'
-            }, quotedOptions);
+            };
+            if (hasMentions) payload.mentions = mentions;
+            sent = await s.sock.sendMessage(targetJid, payload, quotedOptions);
         }
 
         const timestamp = Date.now();
@@ -1331,6 +1504,7 @@ app.post('/api/messages/send-media', async (req, res) => {
             timestamp,
             senderName: s.currentUser?.name || 'Saya',
             quoted: quotedInfo,
+            mentionedJids: hasMentions ? mentions : [],
             status: 'SENT',
             rawMessage: sent.message
         };

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=5.1">
+    <link rel="stylesheet" href="style.css?v=5.2">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -124,6 +124,15 @@
                             <span class="no-stickers-text">Belum ada stiker tersimpan. Klik stiker di chat untuk simpan atau kirim ulang!</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- Mention Autocomplete Box for Group Chats -->
+                <div class="mention-autocomplete-box" id="mentionAutocompleteBox" style="display: none;">
+                    <div class="mention-autocomplete-header">
+                        <span><i class="fa-solid fa-at"></i> Sebut Anggota Grup</span>
+                        <button type="button" class="btn-close-mention" id="btnCloseMention" title="Tutup"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <div class="mention-autocomplete-list" id="mentionAutocompleteList"></div>
                 </div>
 
                 <footer class="chat-input-bar">
@@ -275,6 +284,15 @@
                 <div class="edit-emoji-tray" id="editEmojiTray"></div>
             </div>
 
+            <!-- Mention Autocomplete Box for Edit Modal -->
+            <div class="mention-autocomplete-box edit-mention-autocomplete-box" id="editMentionAutocompleteBox" style="display: none;">
+                <div class="mention-autocomplete-header">
+                    <span><i class="fa-solid fa-at"></i> Sebut Anggota Grup</span>
+                    <button type="button" class="btn-close-mention" id="btnEditCloseMention" title="Tutup"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="mention-autocomplete-list" id="editMentionAutocompleteList"></div>
+            </div>
+
             <textarea id="editMessageInput" class="edit-textarea-large" rows="8" placeholder="Ketik atau ubah pesan di sini..."></textarea>
 
             <div class="modal-footer modal-edit-footer">
@@ -350,6 +368,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=5.1"></script>
+    <script src="app.js?v=5.2"></script>
 </body>
 </html>

@@ -161,6 +161,224 @@ const btnSaveEdit = document.getElementById('btnSaveEdit');
 const toastNotification = document.getElementById('toastNotification');
 const toastText = document.getElementById('toastText');
 
+// Mention Autocomplete Elements & State
+const mentionAutocompleteBox = document.getElementById('mentionAutocompleteBox');
+const mentionAutocompleteList = document.getElementById('mentionAutocompleteList');
+const btnCloseMention = document.getElementById('btnCloseMention');
+const editMentionAutocompleteBox = document.getElementById('editMentionAutocompleteBox');
+const editMentionAutocompleteList = document.getElementById('editMentionAutocompleteList');
+const btnEditCloseMention = document.getElementById('btnEditCloseMention');
+
+let currentGroupParticipants = [];
+let groupParticipantMap = {};
+let stagedMentionJids = new Set();
+let editStagedMentionJids = new Set();
+let mentionActiveIndex = -1;
+let editMentionActiveIndex = -1;
+
+const SENDER_COLORS = [
+    '#53bdeb', '#25d366', '#ffbc38', '#e542a3', 
+    '#9c27b0', '#00a884', '#f05a5b', '#00b0ff', 
+    '#ff6f00', '#26a69a', '#ec407a', '#7e57c2'
+];
+
+function getSenderColor(id) {
+    if (!id) return SENDER_COLORS[0];
+    let hash = 0;
+    const str = String(id);
+    for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+    }
+    const idx = Math.abs(hash) % SENDER_COLORS.length;
+    return SENDER_COLORS[idx];
+}
+
+function formatPhoneNumber(jidOrPhone) {
+    if (!jidOrPhone) return '';
+    let num = jidOrPhone.split('@')[0].replace(/[^0-9]/g, '');
+    if (num.startsWith('62') && num.length >= 10) {
+        return `+62 ${num.slice(2, 5)}-${num.slice(5, 9)}-${num.slice(9)}`;
+    }
+    if (num.length > 5) return `+${num}`;
+    return jidOrPhone;
+}
+
+// Mention Autocomplete UI Management
+function hideMentionAutocomplete(isEdit = false) {
+    if (isEdit) {
+        if (editMentionAutocompleteBox) editMentionAutocompleteBox.style.display = 'none';
+        editMentionActiveIndex = -1;
+    } else {
+        if (mentionAutocompleteBox) mentionAutocompleteBox.style.display = 'none';
+        mentionActiveIndex = -1;
+    }
+}
+
+function renderMentionList(participants, isEdit = false) {
+    const box = isEdit ? editMentionAutocompleteBox : mentionAutocompleteBox;
+    const list = isEdit ? editMentionAutocompleteList : mentionAutocompleteList;
+    if (!box || !list) return;
+
+    if (!participants || participants.length === 0) {
+        list.innerHTML = '<div class="mention-empty">Tidak ada anggota yang cocok</div>';
+        box.style.display = 'block';
+        return;
+    }
+
+    list.innerHTML = '';
+    participants.forEach((p, idx) => {
+        const item = document.createElement('div');
+        const isActive = idx === (isEdit ? editMentionActiveIndex : mentionActiveIndex);
+        item.className = 'mention-item' + (isActive ? ' active' : '');
+        item.dataset.index = idx;
+        
+        const avatarBg = getAvatarBg(p.jid || p.name);
+        const initials = getAvatarInitials(p.name);
+        const adminBadge = p.admin ? `<span class="mention-badge">${p.admin === 'superadmin' ? 'Pembuat' : 'Admin'}</span>` : '';
+
+        item.innerHTML = `
+            <div class="mention-avatar" style="background: ${avatarBg};">${initials}</div>
+            <div class="mention-meta">
+                <span class="mention-name">${escapeHtml(p.name)}</span>
+                <span class="mention-phone">${escapeHtml(p.phone || '')}</span>
+            </div>
+            ${adminBadge}
+        `;
+
+        item.onmousedown = (e) => {
+            e.preventDefault();
+            selectMentionParticipant(p, isEdit);
+        };
+
+        list.appendChild(item);
+    });
+
+    box.style.display = 'block';
+}
+
+function selectMentionParticipant(p, isEdit = false) {
+    const input = isEdit ? editMessageInput : messageInput;
+    if (!input) return;
+
+    const cursorPos = input.selectionStart;
+    const val = input.value;
+    const beforeCursor = val.slice(0, cursorPos);
+    const afterCursor = val.slice(cursorPos);
+
+    const atMatch = /(?:^|\s)@([^\s@]*)$/.exec(beforeCursor);
+    if (!atMatch) return;
+
+    const atPos = beforeCursor.lastIndexOf('@');
+    const insertName = p.name || p.phone || p.jid.split('@')[0];
+    const mentionText = `@${insertName} `;
+
+    input.value = val.slice(0, atPos) + mentionText + afterCursor;
+    const newCursor = atPos + mentionText.length;
+    input.selectionStart = input.selectionEnd = newCursor;
+
+    if (isEdit) {
+        editStagedMentionJids.add(p.jid);
+    } else {
+        stagedMentionJids.add(p.jid);
+    }
+
+    hideMentionAutocomplete(isEdit);
+    input.focus();
+    if (!isEdit) autoResizeTextarea();
+}
+
+function handleMentionInput(input, isEdit = false) {
+    const isGroup = (currentChatJid && currentChatJid.endsWith('@g.us')) || !!allChats.find(c => c.jid === currentChatJid && c.isGroup);
+    if (!isGroup) {
+        hideMentionAutocomplete(isEdit);
+        return;
+    }
+
+    const cursorPos = input.selectionStart;
+    const textBefore = input.value.slice(0, cursorPos);
+    const match = /(?:^|\s)@([^\s@]*)$/.exec(textBefore);
+
+    if (!match) {
+        hideMentionAutocomplete(isEdit);
+        return;
+    }
+
+    const query = match[1].toLowerCase().trim();
+    const filtered = currentGroupParticipants.filter(p => {
+        if (!query) return true;
+        const name = (p.name || '').toLowerCase();
+        const phone = (p.phone || '').toLowerCase().replace(/[^0-9]/g, '');
+        const jidNum = (p.jid || '').split('@')[0];
+        return name.includes(query) || phone.includes(query) || jidNum.includes(query);
+    });
+
+    if (isEdit) {
+        editMentionActiveIndex = filtered.length > 0 ? 0 : -1;
+    } else {
+        mentionActiveIndex = filtered.length > 0 ? 0 : -1;
+    }
+
+    renderMentionList(filtered, isEdit);
+}
+
+function handleMentionKeydown(e, isEdit = false) {
+    const box = isEdit ? editMentionAutocompleteBox : mentionAutocompleteBox;
+    if (!box || box.style.display === 'none') return false;
+
+    const list = isEdit ? editMentionAutocompleteList : mentionAutocompleteList;
+    const items = list ? list.querySelectorAll('.mention-item') : [];
+    if (items.length === 0) {
+        if (e.key === 'Escape') {
+            hideMentionAutocomplete(isEdit);
+            return true;
+        }
+        return false;
+    }
+
+    let activeIdx = isEdit ? editMentionActiveIndex : mentionActiveIndex;
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeIdx = (activeIdx + 1) % items.length;
+        if (isEdit) editMentionActiveIndex = activeIdx;
+        else mentionActiveIndex = activeIdx;
+        updateMentionActiveHighlight(items, activeIdx);
+        return true;
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIdx = (activeIdx - 1 + items.length) % items.length;
+        if (isEdit) editMentionActiveIndex = activeIdx;
+        else mentionActiveIndex = activeIdx;
+        updateMentionActiveHighlight(items, activeIdx);
+        return true;
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (activeIdx >= 0 && activeIdx < items.length) {
+            e.preventDefault();
+            items[activeIdx].dispatchEvent(new MouseEvent('mousedown'));
+            return true;
+        }
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        hideMentionAutocomplete(isEdit);
+        return true;
+    }
+
+    return false;
+}
+
+function updateMentionActiveHighlight(items, activeIdx) {
+    items.forEach((it, idx) => {
+        if (idx === activeIdx) {
+            it.classList.add('active');
+            it.scrollIntoView({ block: 'nearest' });
+        } else {
+            it.classList.remove('active');
+        }
+    });
+}
+
+
 // Global Unicode Categorized Emoji Dataset (Unicode Standard - full-emoji-list)
 const UNICODE_EMOJI_CATEGORIES = {
     smileys: [
@@ -686,6 +904,12 @@ function renderChatList(chats) {
 window.selectChat = async function(jid) {
     currentChatJid = jid;
     cancelReply();
+    hideMentionAutocomplete(false);
+    hideMentionAutocomplete(true);
+    stagedMentionJids.clear();
+    currentGroupParticipants = [];
+    groupParticipantMap = {};
+
     const chat = allChats.find(c => c.jid === jid);
 
     const displayName = formatChatDisplayName(chat) || (jid.includes('@') ? jid.split('@')[0] : jid);
@@ -693,13 +917,42 @@ window.selectChat = async function(jid) {
     activeAvatar.style.background = bgGradient;
     activeAvatar.textContent = getAvatarInitials(displayName);
     activeContactName.textContent = displayName;
-    activeContactSubtitle.textContent = chat?.isGroup ? 'Grup WhatsApp' : (jid.includes('@') ? jid.split('@')[0] : 'Online');
+
+    const isGroupChat = Boolean(chat?.isGroup || jid.endsWith('@g.us'));
+    activeContactSubtitle.textContent = isGroupChat ? 'Grup WhatsApp' : (jid.includes('@') ? jid.split('@')[0] : 'Online');
 
     emptyChatView.style.display = 'none';
     activeChatView.style.display = 'flex';
 
     document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
     renderChatList(allChats);
+
+    // If group chat, fetch group participants in background
+    if (isGroupChat) {
+        sessionFetch('/api/groups/' + encodeURIComponent(jid) + '/participants')
+            .then(res => res.json())
+            .then(participants => {
+                if (currentChatJid !== jid) return;
+                currentGroupParticipants = Array.isArray(participants) ? participants : [];
+                groupParticipantMap = {};
+                for (const p of currentGroupParticipants) {
+                    if (p.jid) groupParticipantMap[p.jid] = p.name;
+                    if (p.rawJid) groupParticipantMap[p.rawJid] = p.name;
+                    const cleanPhone = (p.phone || '').replace(/[^0-9]/g, '');
+                    if (cleanPhone) groupParticipantMap[cleanPhone] = p.name;
+                    const jidNum = (p.jid || '').split('@')[0];
+                    if (jidNum) groupParticipantMap[jidNum] = p.name;
+                }
+                if (activeContactSubtitle && currentGroupParticipants.length > 0) {
+                    activeContactSubtitle.textContent = `${currentGroupParticipants.length} anggota`;
+                }
+                // Refresh rendered messages so participant names and mentions are updated with real contact names
+                if (currentChatMessages && currentChatMessages.length > 0) {
+                    renderMessages(currentChatMessages);
+                }
+            })
+            .catch(err => console.warn('Gagal memuat peserta grup:', err));
+    }
 
     messagesContainer.innerHTML = '<div class="empty-state-list"><i class="fa-solid fa-spinner fa-spin"></i><p>Memuat pesan...</p></div>';
     try {
@@ -869,7 +1122,32 @@ function createBubbleElement(m) {
     bubble.ondblclick = (e) => window.startReply(m.id, e);
 
     const dropdownBtnHtml = '<button class="btn-msg-dropdown" title="Menu pesan" onclick="openMsgContextMenu(\'' + escapeHtml(m.id) + '\', event)"><i class="fa-solid fa-chevron-down"></i></button>';
-    const senderHtml = (!isOut && m.senderName) ? ('<div class="message-sender">' + escapeHtml(m.senderName) + '</div>') : '';
+
+    // Group Chat vs 1-on-1 Chat Sender Header
+    const isGroup = (currentChatJid && currentChatJid.endsWith('@g.us')) || !!allChats.find(c => c.jid === currentChatJid && c.isGroup);
+    let senderHtml = '';
+    if (!isOut && isGroup) {
+        let sName = '';
+        const pJid = m.participantJid || m.senderJid || '';
+        const groupNum = currentChatJid ? currentChatJid.split('@')[0] : '';
+        const pNum = pJid ? pJid.split('@')[0] : '';
+
+        if (pJid && groupParticipantMap[pJid]) {
+            sName = groupParticipantMap[pJid];
+        } else if (pNum && groupParticipantMap[pNum]) {
+            sName = groupParticipantMap[pNum];
+        } else if (m.senderName && m.senderName !== groupNum && !m.senderName.includes(groupNum)) {
+            sName = m.senderName;
+        } else if (pNum) {
+            sName = formatPhoneNumber(pNum);
+        } else {
+            sName = 'Anggota Grup';
+        }
+
+        const senderColor = getSenderColor(pJid || sName);
+        senderHtml = '<div class="message-sender" style="color: ' + senderColor + ';">' + escapeHtml(sName) + '</div>';
+    }
+
     const timeStr = formatTime(m.timestamp);
     const isRead = m.status === 'READ';
     const tickIcon = isOut ? ('<i class="fa-solid fa-check-double' + (isRead ? ' read-tick' : '') + '" style="font-size: 10px;"></i>') : '';
@@ -905,7 +1183,7 @@ function createBubbleElement(m) {
             });
         }
     } else if (m.msgType === 'image' && m.mediaBase64) {
-        const captionHtml = (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + renderFormattedWhatsAppText(m.text) + '</div>' : '');
+        const captionHtml = (m.text && m.text !== '[Gambar]' ? '<div class="message-text">' + renderFormattedWhatsAppText(m.text, m) + '</div>' : '');
         contentHtml = '<div class="message-image-container" onclick="openImageLightbox(\'' + escapeHtml(m.id) + '\')" title="Klik untuk perbesar gambar">' +
             '<img src="' + m.mediaBase64 + '" class="message-image" alt="Gambar" />' +
             '<button type="button" class="btn-image-quick-download" title="Unduh Gambar" onclick="downloadImageDirect(\'' + m.mediaBase64 + '\', event)">' +
@@ -924,7 +1202,7 @@ function createBubbleElement(m) {
             '<i class="fa-solid fa-download" style="margin-left:auto; color:#8696a0;"></i>' +
         '</a>';
     } else {
-        contentHtml = '<div class="message-text">' + renderFormattedWhatsAppText(m.text || '') + '</div>';
+        contentHtml = '<div class="message-text">' + renderFormattedWhatsAppText(m.text || '', m) + '</div>';
     }
 
     bubble.innerHTML = dropdownBtnHtml +
@@ -1147,6 +1425,8 @@ function resetEditModalState() {
     delete editMessageInput.dataset.editMsgId;
     stagedEditImage = null;
     removeEditImage = false;
+    hideMentionAutocomplete(true);
+    editStagedMentionJids.clear();
     if (editImageThumb) editImageThumb.src = '';
     if (editImageFileInput) editImageFileInput.value = '';
     if (editImagePreviewBar) editImagePreviewBar.style.display = 'none';
@@ -1265,9 +1545,15 @@ document.querySelectorAll('.btn-toolbar-quick').forEach(btn => {
     });
 });
 
-// Auto-list continuation on Enter in editMessageInput
+// Mention and Auto-list handling in editMessageInput
 if (editMessageInput) {
+    editMessageInput.addEventListener('input', () => {
+        handleMentionInput(editMessageInput, true);
+    });
+
     editMessageInput.addEventListener('keydown', (e) => {
+        if (handleMentionKeydown(e, true)) return;
+
         if (e.key === 'Enter' && !e.ctrlKey) {
             handleListEnter(editMessageInput, e);
         } else if (e.key === 'Enter' && e.ctrlKey) {
@@ -1498,6 +1784,25 @@ async function sendMessage() {
     if ((!text && !stagedAttachment) || !currentChatJid) return;
     if (text) grabEmojisFromText(text);
 
+    // Build mentions list for group chats
+    const mentions = [];
+    if (currentChatJid && currentChatJid.endsWith('@g.us')) {
+        stagedMentionJids.forEach(jid => {
+            if (!mentions.includes(jid)) mentions.push(jid);
+        });
+        for (const p of currentGroupParticipants) {
+            const pNum = (p.jid || '').split('@')[0];
+            const pName = p.name;
+            if (pNum && text.includes('@' + pNum) && !mentions.includes(p.jid)) {
+                mentions.push(p.jid);
+            } else if (pName && text.includes('@' + pName) && !mentions.includes(p.jid)) {
+                mentions.push(p.jid);
+            }
+        }
+    }
+    stagedMentionJids.clear();
+    hideMentionAutocomplete(false);
+
     const quotedMsgId = activeQuotedMsg ? activeQuotedMsg.id : null;
     cancelReply();
 
@@ -1530,7 +1835,8 @@ async function sendMessage() {
                     base64: attachment.base64,
                     mimeType: attachment.mimeType,
                     fileName: attachment.fileName,
-                    quotedMsgId
+                    quotedMsgId,
+                    mentions
                 };
                 const res = await sessionFetch('/api/messages/send-media', {
                     method: 'POST',
@@ -1544,7 +1850,7 @@ async function sendMessage() {
             const res = await sessionFetch('/api/messages/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jid: currentChatJid, text, quotedMsgId })
+                body: JSON.stringify({ jid: currentChatJid, text, quotedMsgId, mentions })
             });
             const result = await res.json();
             if (!result.success) {
@@ -1726,7 +2032,7 @@ function handleListEnter(textarea, e) {
 }
 
 // Rich WhatsApp Text Formatter for message bubbles
-function renderFormattedWhatsAppText(rawText) {
+function renderFormattedWhatsAppText(rawText, m = null) {
     if (!rawText) return '';
 
     // First, escape HTML to prevent XSS
@@ -1747,11 +2053,35 @@ function renderFormattedWhatsAppText(rawText) {
     // 5. Strikethrough: ~strike~
     text = text.replace(/(^|[\s(])~([^\s~][^~]*?[^\s~]|[^\s~])~(?=[\s).,!?:]|$)/g, '$1<s>$2</s>');
 
-    // 6. Autolink URLs: http:// or https://
+    // 6. WhatsApp Mentions: @<digits> (e.g. @628123... or @550831... LID)
+    text = text.replace(/@(\d{5,})/g, (match, digits) => {
+        let display = groupParticipantMap[digits] || 
+                      groupParticipantMap[digits + '@s.whatsapp.net'] || 
+                      groupParticipantMap[digits + '@lid'];
+        if (!display) {
+            display = digits.startsWith('62') ? `+62 ${digits.slice(2, 5)}-${digits.slice(5, 9)}-${digits.slice(9)}` : `+${digits}`;
+        }
+        return `<span class="wa-mention" onclick="window.onMentionClick('${digits}', event)" title="Klik untuk interaksi / chat">@${escapeHtml(display)}</span>`;
+    });
+
+    // 7. Autolink URLs: http:// or https://
     text = text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 
     return text;
 }
+
+window.onMentionClick = function(id, e) {
+    if (e) e.stopPropagation();
+    let clean = (id || '').replace(/[^0-9]/g, '');
+    if (clean.length >= 8) {
+        if (clean.startsWith('0')) clean = '62' + clean.slice(1);
+        const jid = clean + '@s.whatsapp.net';
+        const contactName = groupParticipantMap[clean] || groupParticipantMap[jid] || ('+' + clean);
+        openContactChat(jid, contactName);
+    } else {
+        showToast('Menyebut: ' + (groupParticipantMap[id] || id));
+    }
+};
 
 // Auto-resize textarea to fit multi-line content
 function autoResizeTextarea() {
@@ -1985,9 +2315,14 @@ if (btnToggleSort) {
 searchChatInput.addEventListener('input', () => renderChatList(allChats));
 btnSendMessage.addEventListener('click', sendMessage);
 
-messageInput.addEventListener('input', autoResizeTextarea);
+messageInput.addEventListener('input', () => {
+    autoResizeTextarea();
+    handleMentionInput(messageInput, false);
+});
 
 messageInput.addEventListener('keydown', (e) => {
+    if (handleMentionKeydown(e, false)) return;
+
     if (e.key === 'Enter' && !e.shiftKey) {
         // If user pressed Enter on an empty bullet or numbered line, exit the list cleanly
         const handled = handleListEnter(messageInput, e);
@@ -2003,6 +2338,24 @@ messageInput.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
         e.preventDefault();
         if (btnFormatAI) btnFormatAI.click();
+    }
+});
+
+// Mention Autocomplete Close Buttons & Outside Click Handlers
+if (btnCloseMention) {
+    btnCloseMention.onclick = () => hideMentionAutocomplete(false);
+}
+
+if (btnEditCloseMention) {
+    btnEditCloseMention.onclick = () => hideMentionAutocomplete(true);
+}
+
+document.addEventListener('click', (e) => {
+    if (mentionAutocompleteBox && !mentionAutocompleteBox.contains(e.target) && e.target !== messageInput) {
+        hideMentionAutocomplete(false);
+    }
+    if (editMentionAutocompleteBox && !editMentionAutocompleteBox.contains(e.target) && e.target !== editMessageInput) {
+        hideMentionAutocomplete(true);
     }
 });
 
