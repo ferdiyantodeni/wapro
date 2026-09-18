@@ -11,6 +11,37 @@ let stagedAttachment = null; // { base64, mimeType, fileName }
 let activeQuotedMsg = null; // Quoted message object being replied to
 let savedStickers = JSON.parse(localStorage.getItem('wapro_saved_stickers') || '[]');
 
+// Auto-grabbed and Saved Emojis
+const DEFAULT_EMOJIS = [
+    '👍', '❤️', '😂', '🙏', '😊', '🔥', '🎉', '✅', '👏', '😁', '😅', '💯',
+    '🗓️', '⏰', '💡', '📍', '📌', '📞', '📅', '👉', '⚠️', '📢', '🚀', '🤝', '✨', '🏢', '👥', '📝', '🔗'
+];
+
+function isSameEmoji(e1, e2) {
+    if (e1 === e2) return true;
+    if (!e1 || !e2) return false;
+    return e1.replace(/[\uFE0E\uFE0F]/g, '') === e2.replace(/[\uFE0E\uFE0F]/g, '');
+}
+
+let savedEmojis = [];
+try {
+    const rawEmojis = localStorage.getItem('wapro_saved_emojis');
+    if (rawEmojis) {
+        savedEmojis = JSON.parse(rawEmojis);
+    }
+} catch (e) {}
+
+if (!Array.isArray(savedEmojis) || savedEmojis.length === 0) {
+    savedEmojis = [...DEFAULT_EMOJIS];
+    localStorage.setItem('wapro_saved_emojis', JSON.stringify(savedEmojis));
+} else {
+    for (const d of DEFAULT_EMOJIS) {
+        if (!savedEmojis.some(e => isSameEmoji(e, d))) {
+            savedEmojis.push(d);
+        }
+    }
+}
+
 // Multi-User Session Identification
 let sessionId = localStorage.getItem('wapro_session_id');
 if (!sessionId) {
@@ -126,6 +157,82 @@ const btnSaveEdit = document.getElementById('btnSaveEdit');
 const toastNotification = document.getElementById('toastNotification');
 const toastText = document.getElementById('toastText');
 
+// Auto-grab Emojis and Render Emoji Trays
+function grabEmojisFromText(text) {
+    if (!text || typeof text !== 'string') return;
+    const EMOJI_REGEX = /(?:\p{Extended_Pictographic}(?:[\uFE0E\uFE0F]|[\u{1F3FB}-\u{1F3FF}]|\u200D\p{Extended_Pictographic})*|[\u{1F1E6}-\u{1F1FF}]{2}|[0-9#*]\uFE0F?\u20E3)/gu;
+    const matches = text.match(EMOJI_REGEX);
+    if (!matches || matches.length === 0) return;
+
+    let changed = false;
+    for (const emoji of matches) {
+        const clean = emoji.trim();
+        if (!clean) continue;
+        if ((clean === '©' || clean === '®' || clean === '™') && !clean.includes('\uFE0F')) continue;
+
+        const existingIdx = savedEmojis.findIndex(e => isSameEmoji(e, clean));
+        if (existingIdx === -1) {
+            // New emoji discovered: put at front
+            savedEmojis.unshift(clean);
+            changed = true;
+        } else if (existingIdx > 0) {
+            // Move recently used/received emoji to top
+            const found = savedEmojis.splice(existingIdx, 1)[0];
+            savedEmojis.unshift(found);
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        if (savedEmojis.length > 150) {
+            savedEmojis = savedEmojis.slice(0, 150);
+        }
+        localStorage.setItem('wapro_saved_emojis', JSON.stringify(savedEmojis));
+        renderEmojiTrays();
+    }
+}
+
+function renderEmojiTrays() {
+    if (emojiTray) {
+        emojiTray.innerHTML = '';
+        savedEmojis.forEach(emoji => {
+            const span = document.createElement('span');
+            span.className = 'emoji-item';
+            span.textContent = emoji;
+            span.title = 'Klik untuk masukkan ' + emoji;
+            span.onclick = () => {
+                messageInput.value += emoji;
+                autoResizeTextarea();
+                messageInput.focus();
+            };
+            emojiTray.appendChild(span);
+        });
+    }
+
+    if (editEmojiTray) {
+        editEmojiTray.innerHTML = '';
+        savedEmojis.forEach(emoji => {
+            const span = document.createElement('span');
+            span.className = 'edit-emoji-item';
+            span.textContent = emoji;
+            span.title = 'Klik untuk masukkan ' + emoji;
+            span.onclick = () => {
+                const char = emoji;
+                const start = editMessageInput.selectionStart;
+                const end = editMessageInput.selectionEnd;
+                const val = editMessageInput.value;
+                editMessageInput.value = val.substring(0, start) + char + val.substring(end);
+                editMessageInput.selectionStart = editMessageInput.selectionEnd = start + char.length;
+                editMessageInput.focus();
+            };
+            editEmojiTray.appendChild(span);
+        });
+    }
+}
+
+// Initial populate of emoji trays
+renderEmojiTrays();
+
 // Request Browser Notifications on Click
 if ('Notification' in window && Notification.permission === 'default') {
     window.addEventListener('click', () => {
@@ -216,6 +323,9 @@ function handleWsEvent(evt, data) {
         if (data.chats) {
             allChats = data.chats;
             renderChatList(allChats);
+            allChats.forEach(c => {
+                if (c.lastMessage) grabEmojisFromText(c.lastMessage);
+            });
         }
         if (data.qr) showQrCode(data.qr);
         if (data.pairingCode) showPairingCode(data.pairingCode);
@@ -268,6 +378,9 @@ function handleWsEvent(evt, data) {
 
         if (message.msgType === 'sticker' && message.mediaBase64) {
             saveStickerToTray(message.mediaBase64);
+        }
+        if (message.text) {
+            grabEmojisFromText(message.text);
         }
 
         if (currentChatJid === jid) {
@@ -368,6 +481,11 @@ function formatChatDisplayName(chat) {
 }
 
 function renderChatList(chats) {
+    if (Array.isArray(chats)) {
+        chats.forEach(c => {
+            if (c && c.lastMessage) grabEmojisFromText(c.lastMessage);
+        });
+    }
     const q = searchChatInput.value.toLowerCase().trim();
     chatListEl.innerHTML = '';
 
@@ -484,7 +602,15 @@ function renderMessages(msgs) {
     }
 
     messagesContainer.innerHTML = '';
-    msgs.forEach(m => appendMessage(m));
+    msgs.forEach(m => {
+        appendMessage(m);
+        if (m.msgType === 'sticker' && m.mediaBase64) {
+            saveStickerToTray(m.mediaBase64);
+        }
+        if (m.text) {
+            grabEmojisFromText(m.text);
+        }
+    });
 }
 
 function renderContactCardHtml(contact) {
@@ -945,7 +1071,12 @@ if (btnRemoveEditImage) {
 // Support Ctrl+V paste image directly inside editMessageInput
 if (editMessageInput) {
     editMessageInput.addEventListener('paste', (e) => {
-        const items = (e.clipboardData || window.clipboardData)?.items;
+        const clipboardData = e.clipboardData || window.clipboardData;
+        if (clipboardData) {
+            const pastedText = clipboardData.getData('text');
+            if (pastedText) grabEmojisFromText(pastedText);
+        }
+        const items = clipboardData?.items;
         if (!items) return;
         for (const item of items) {
             if (item.kind === 'file' && item.type.startsWith('image/')) {
@@ -975,19 +1106,6 @@ if (btnEditEmojiToggle) {
         btnEditEmojiToggle.classList.toggle('active', !isShown);
     };
 }
-
-// Click on edit emoji items to insert into edit textarea
-document.querySelectorAll('.edit-emoji-item').forEach(el => {
-    el.addEventListener('click', () => {
-        const char = el.textContent;
-        const start = editMessageInput.selectionStart;
-        const end = editMessageInput.selectionEnd;
-        const val = editMessageInput.value;
-        editMessageInput.value = val.substring(0, start) + char + val.substring(end);
-        editMessageInput.selectionStart = editMessageInput.selectionEnd = start + char.length;
-        editMessageInput.focus();
-    });
-});
 
 // Quick formatting buttons in edit modal (*tebal*, _miring_, ~coret~, • poin, bullet, number)
 document.querySelectorAll('.btn-toolbar-quick').forEach(btn => {
@@ -1072,6 +1190,7 @@ if (btnSaveEdit) {
             });
             const result = await res.json();
             if (result.success) {
+                if (newText) grabEmojisFromText(newText);
                 resetEditModalState();
                 showToast('Pesan berhasil diperbarui!');
             } else {
@@ -1248,6 +1367,7 @@ window.onStickerClick = function(base64) {
 async function sendMessage() {
     const text = messageInput.value.trim();
     if ((!text && !stagedAttachment) || !currentChatJid) return;
+    if (text) grabEmojisFromText(text);
 
     const quotedMsgId = activeQuotedMsg ? activeQuotedMsg.id : null;
     cancelReply();
@@ -1698,13 +1818,6 @@ function renderStickerTray() {
     });
 }
 
-document.querySelectorAll('.emoji-item').forEach(el => {
-    el.addEventListener('click', () => {
-        messageInput.value += el.textContent;
-        messageInput.focus();
-    });
-});
-
 // Filter Pills Click
 filterPills.forEach(pill => {
     if (pill.classList.contains('sort-pill') || pill.id === 'btnToggleSort') return;
@@ -1777,6 +1890,7 @@ messageInput.addEventListener('paste', (e) => {
 
     const pastedText = clipboardData.getData('text');
     if (!pastedText) return;
+    grabEmojisFromText(pastedText);
 
     // Detect markdown or AI formatting
     const hasAIMarkdown = /\*\*|#{1,6}\s+|^[\t ]*[-*+]\s+|~~/m.test(pastedText);

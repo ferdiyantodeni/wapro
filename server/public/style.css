@@ -1533,10 +1533,12 @@ body {
 /* Quick Emoji Tray */
 .emoji-tray {
   background-color: #202c33;
-  padding: 8px 16px;
+  padding: 10px 16px;
   display: flex;
-  gap: 12px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-height: 160px;
+  overflow-y: auto;
 }
 
 .emoji-item {
