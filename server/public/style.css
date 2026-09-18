@@ -840,16 +840,22 @@ body {
 }
 
 /* Edit Emoji Tray */
+.edit-emoji-tray-container {
+  display: flex;
+  flex-direction: column;
+  background-color: #182229;
+  border: 1px solid #2a3942;
+  border-top: 1px dashed rgba(134, 150, 160, 0.2);
+  border-bottom: none;
+}
+
 .edit-emoji-tray {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   background-color: #182229;
-  border: 1px solid #2a3942;
-  border-top: 1px dashed rgba(134, 150, 160, 0.2);
-  border-bottom: none;
   padding: 10px 12px;
-  max-height: 120px;
+  max-height: 130px;
   overflow-y: auto;
 }
 
@@ -1528,6 +1534,59 @@ body {
 .tray-tab.active {
   color: #00a884;
   border-bottom-color: #00a884;
+}
+
+/* Emoji Tray Wrapper & Category Bar */
+.emoji-tray-wrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.emoji-category-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px;
+  background-color: #182229;
+  border-bottom: 1px solid #2a3942;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.emoji-category-bar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.emoji-category-bar::-webkit-scrollbar-thumb {
+  background-color: #2a3942;
+  border-radius: 2px;
+}
+
+.emoji-cat-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #8696a0;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s;
+}
+
+.emoji-cat-btn:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: #e9edef;
+}
+
+.emoji-cat-btn.active {
+  background-color: #00a884;
+  color: #111b21;
+  font-weight: 600;
 }
 
 /* Quick Emoji Tray */

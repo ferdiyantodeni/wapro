@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=5.0">
+    <link rel="stylesheet" href="style.css?v=5.1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -107,7 +107,18 @@
                         <button class="tray-tab active" id="tabEmojiBtn"><i class="fa-regular fa-face-smile"></i> Emoji</button>
                         <button class="tray-tab" id="tabStickerBtn"><i class="fa-solid fa-note-sticky"></i> Stiker</button>
                     </div>
-                    <div class="emoji-tray" id="emojiTray"></div>
+                    <div class="emoji-tray-wrapper" id="emojiTrayWrapper">
+                        <div class="emoji-category-bar" id="emojiCategoryBar">
+                            <button type="button" class="emoji-cat-btn active" data-cat="recent" title="Terkini / Grabbed"><i class="fa-solid fa-clock-rotate-left"></i> Terkini</button>
+                            <button type="button" class="emoji-cat-btn" data-cat="smileys" title="Smileys & Emosi"><i class="fa-regular fa-face-smile"></i> Senyum</button>
+                            <button type="button" class="emoji-cat-btn" data-cat="gestures" title="Gestur & Tubuh"><i class="fa-solid fa-hand"></i> Gestur</button>
+                            <button type="button" class="emoji-cat-btn" data-cat="office" title="Kantor, Simbol & Bisnis"><i class="fa-solid fa-briefcase"></i> Kantor & Simbol</button>
+                            <button type="button" class="emoji-cat-btn" data-cat="celebration" title="Aktivitas & Perayaan"><i class="fa-solid fa-gift"></i> Perayaan</button>
+                            <button type="button" class="emoji-cat-btn" data-cat="nature" title="Hewan, Alam & Makanan"><i class="fa-solid fa-mug-hot"></i> Makanan & Alam</button>
+                            <button type="button" class="emoji-cat-btn" data-cat="travel" title="Perjalanan & Tempat"><i class="fa-solid fa-car"></i> Perjalanan</button>
+                        </div>
+                        <div class="emoji-tray" id="emojiTray"></div>
+                    </div>
                     <div class="sticker-tray" id="stickerTray" style="display: none;">
                         <div class="sticker-list" id="stickerList">
                             <span class="no-stickers-text">Belum ada stiker tersimpan. Klik stiker di chat untuk simpan atau kirim ulang!</span>
@@ -251,7 +262,18 @@
             </div>
 
             <!-- Emoji Tray inside Edit Modal -->
-            <div class="edit-emoji-tray" id="editEmojiTray" style="display: none;"></div>
+            <div class="edit-emoji-tray-container" id="editEmojiTrayContainer" style="display: none;">
+                <div class="emoji-category-bar edit-emoji-cat-bar" id="editEmojiCatBar">
+                    <button type="button" class="emoji-cat-btn active" data-cat="recent" title="Terkini / Grabbed"><i class="fa-solid fa-clock-rotate-left"></i> Terkini</button>
+                    <button type="button" class="emoji-cat-btn" data-cat="smileys" title="Smileys & Emosi"><i class="fa-regular fa-face-smile"></i> Senyum</button>
+                    <button type="button" class="emoji-cat-btn" data-cat="gestures" title="Gestur & Tubuh"><i class="fa-solid fa-hand"></i> Gestur</button>
+                    <button type="button" class="emoji-cat-btn" data-cat="office" title="Kantor, Simbol & Bisnis"><i class="fa-solid fa-briefcase"></i> Kantor & Simbol</button>
+                    <button type="button" class="emoji-cat-btn" data-cat="celebration" title="Aktivitas & Perayaan"><i class="fa-solid fa-gift"></i> Perayaan</button>
+                    <button type="button" class="emoji-cat-btn" data-cat="nature" title="Hewan, Alam & Makanan"><i class="fa-solid fa-mug-hot"></i> Makanan & Alam</button>
+                    <button type="button" class="emoji-cat-btn" data-cat="travel" title="Perjalanan & Tempat"><i class="fa-solid fa-car"></i> Perjalanan</button>
+                </div>
+                <div class="edit-emoji-tray" id="editEmojiTray"></div>
+            </div>
 
             <textarea id="editMessageInput" class="edit-textarea-large" rows="8" placeholder="Ketik atau ubah pesan di sini..."></textarea>
 
@@ -328,6 +350,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=5.0"></script>
+    <script src="app.js?v=5.1"></script>
 </body>
 </html>

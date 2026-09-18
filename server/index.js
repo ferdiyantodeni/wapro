@@ -457,53 +457,63 @@ class WhatsAppSession {
     }
 
     async getMessageFromStore(key) {
-        if (!key) return undefined;
+        if (!key || !key.id) return undefined;
         try {
-            const jid = key.remoteJid;
-            let list = this.store.messages[jid];
-            if (!list && this.store.lidMap && this.store.lidMap[jid]) {
-                list = this.store.messages[this.store.lidMap[jid]];
+            const rawJid = key.remoteJid;
+            const normJid = rawJid ? jidNormalizedUser(rawJid) : null;
+            const mappedJid = (this.store.lidMap && rawJid) ? this.store.lidMap[rawJid] : null;
+            const mappedNormJid = (this.store.lidMap && normJid) ? this.store.lidMap[normJid] : null;
+
+            let m = null;
+
+            // 1. Check direct remoteJid
+            if (rawJid && this.store.messages[rawJid]) {
+                m = this.store.messages[rawJid].find(item => item.id === key.id);
             }
-            if (!list) {
+            // 2. Check normalized remoteJid
+            if (!m && normJid && this.store.messages[normJid]) {
+                m = this.store.messages[normJid].find(item => item.id === key.id);
+            }
+            // 3. Check mapped LID or Phone JID
+            if (!m && mappedJid && this.store.messages[mappedJid]) {
+                m = this.store.messages[mappedJid].find(item => item.id === key.id);
+            }
+            if (!m && mappedNormJid && this.store.messages[mappedNormJid]) {
+                m = this.store.messages[mappedNormJid].find(item => item.id === key.id);
+            }
+            // 4. Global fallback search across all stored chats
+            if (!m) {
                 for (const msgs of Object.values(this.store.messages || {})) {
-                    const found = msgs.find(m => m.id === key.id);
-                    if (found) {
-                        list = [found];
-                        break;
+                    if (Array.isArray(msgs)) {
+                        const found = msgs.find(item => item.id === key.id);
+                        if (found) {
+                            m = found;
+                            break;
+                        }
                     }
                 }
             }
 
-            const m = list ? list.find(item => item.id === key.id) : null;
-            if (!m) return undefined;
+            if (!m) {
+                console.log(`[${this.sessionId}] [RETRY] Message not found for key ID: ${key.id} (remoteJid: ${rawJid})`);
+                return undefined;
+            }
 
+            console.log(`[${this.sessionId}] [RETRY] Successfully found message for key ID: ${key.id} to satisfy recipient decrypt retry`);
+
+            // If rawMessage proto is available, always return it directly
             if (m.rawMessage) {
                 return m.rawMessage;
             }
 
-            if (m.msgType === 'image' && m.mediaBase64) {
+            // If pure text message
+            if (m.text && (!m.msgType || m.msgType === 'text')) {
                 return {
-                    imageMessage: {
-                        caption: m.text || ''
-                    }
+                    conversation: m.text
                 };
             }
 
-            if (m.msgType === 'contact' && m.contactInfo) {
-                const cName = m.contactInfo.name || 'Kontak';
-                const cWaid = m.contactInfo.waid || '';
-                const vcard = 'BEGIN:VCARD\nVERSION:3.0\nFN:' + cName + '\nTEL;waid=' + cWaid + ':+' + cWaid + '\nEND:VCARD';
-                return {
-                    contactsArrayMessage: {
-                        displayName: cName,
-                        contacts: [{ displayName: cName, vcard }]
-                    }
-                };
-            }
-
-            return {
-                conversation: m.text || ''
-            };
+            return undefined;
         } catch (err) {
             console.error(`[${this.sessionId}] Error in getMessageFromStore:`, err.message);
             return undefined;
@@ -530,6 +540,7 @@ class WhatsAppSession {
                 syncFullHistory: true,
                 generateHighQualityLinkPreview: true,
                 msgRetryCounterCache: this.msgRetryCounterCache,
+                maxMsgRetryCount: 5,
                 getMessage: async (key) => this.getMessageFromStore(key),
                 keepAliveIntervalMs: 25000,
                 defaultQueryTimeoutMs: undefined
@@ -1214,8 +1225,9 @@ app.post('/api/messages/send', async (req, res) => {
         }
 
         const canonicalJid = await s.resolveCanonicalJid(jid);
+        const targetJid = canonicalJid || jid;
         const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
-        const sent = await s.sock.sendMessage(jid, { text }, quotedOptions);
+        const sent = await s.sock.sendMessage(targetJid, { text }, quotedOptions);
         const timestamp = Date.now();
 
         try {
@@ -1285,21 +1297,22 @@ app.post('/api/messages/send-media', async (req, res) => {
         const dataPart = base64.includes(',') ? base64.split(',')[1] : base64;
         const buffer = Buffer.from(dataPart, 'base64');
         const canonicalJid = await s.resolveCanonicalJid(jid);
+        const targetJid = canonicalJid || jid;
         const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
         let sent;
         let msgType = 'document';
 
         if ((mimeType || '').startsWith('image/')) {
             msgType = 'image';
-            sent = await s.sock.sendMessage(jid, { image: buffer, caption: caption || '' }, quotedOptions);
+            sent = await s.sock.sendMessage(targetJid, { image: buffer, caption: caption || '' }, quotedOptions);
         } else if ((mimeType || '').startsWith('audio/')) {
             msgType = 'audio';
-            sent = await s.sock.sendMessage(jid, { audio: buffer, mimetype: mimeType || 'audio/mp4' }, quotedOptions);
+            sent = await s.sock.sendMessage(targetJid, { audio: buffer, mimetype: mimeType || 'audio/mp4' }, quotedOptions);
         } else if ((mimeType || '').startsWith('video/')) {
             msgType = 'video';
-            sent = await s.sock.sendMessage(jid, { video: buffer, caption: caption || '' }, quotedOptions);
+            sent = await s.sock.sendMessage(targetJid, { video: buffer, caption: caption || '' }, quotedOptions);
         } else {
-            sent = await s.sock.sendMessage(jid, {
+            sent = await s.sock.sendMessage(targetJid, {
                 document: buffer,
                 mimetype: mimeType || 'application/octet-stream',
                 fileName: fileName || 'file'
@@ -1364,9 +1377,10 @@ app.post('/api/messages/send-sticker', async (req, res) => {
         const dataPart = base64.includes(',') ? base64.split(',')[1] : base64;
         const buffer = Buffer.from(dataPart, 'base64');
         const canonicalJid = await s.resolveCanonicalJid(jid);
+        const targetJid = canonicalJid || jid;
         const { quotedOptions, quotedInfo } = buildQuotedOptions(s, canonicalJid, quotedMsgId);
 
-        const sent = await s.sock.sendMessage(jid, { sticker: buffer }, quotedOptions);
+        const sent = await s.sock.sendMessage(targetJid, { sticker: buffer }, quotedOptions);
         const timestamp = Date.now();
 
         if (!s.store.messages[canonicalJid]) s.store.messages[canonicalJid] = [];
