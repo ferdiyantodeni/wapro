@@ -24,6 +24,14 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Global exception safety to prevent 502 crashes
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[FATAL] Unhandled Rejection:', reason);
+});
+
 const PORT = process.env.PORT || 8080;
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 
@@ -301,8 +309,13 @@ class WhatsAppSession {
 
     // Resolve participant display name in group chats
     resolveParticipantName(participantJid, pushName = null) {
-        if (!participantJid) return '';
-        const normJid = jidNormalizedUser(participantJid);
+        if (!participantJid || typeof participantJid !== 'string') return '';
+        let normJid = participantJid;
+        try {
+            normJid = jidNormalizedUser(participantJid) || participantJid;
+        } catch (e) {
+            normJid = participantJid;
+        }
 
         if (pushName && typeof pushName === 'string' && pushName.trim()) {
             const cleanPush = pushName.trim();
@@ -318,42 +331,48 @@ class WhatsAppSession {
             return cleanPush;
         }
 
-        const c = (this.store.contacts && (this.store.contacts[normJid] || this.store.contacts[participantJid]));
-        if (c?.name && !c.name.match(/^\d{10,}$/)) return c.name;
-        if (c?.notify) return c.notify;
-        if (c?.verifiedName) return c.verifiedName;
+        try {
+            const c = (this.store.contacts && (this.store.contacts[normJid] || this.store.contacts[participantJid]));
+            if (c?.name && typeof c.name === 'string' && !c.name.match(/^\d{10,}$/)) return c.name;
+            if (c?.notify && typeof c.notify === 'string') return c.notify;
+            if (c?.verifiedName && typeof c.verifiedName === 'string') return c.verifiedName;
 
-        if (this.store.lidMap) {
-            const mapped = this.store.lidMap[normJid] || this.store.lidMap[participantJid];
-            if (mapped) {
-                const mc = this.store.contacts && (this.store.contacts[mapped] || this.store.contacts[jidNormalizedUser(mapped)]);
-                if (mc?.name && !mc.name.match(/^\d{10,}$/)) return mc.name;
-                if (mc?.notify) return mc.notify;
-                if (mc?.verifiedName) return mc.verifiedName;
-                const mNum = mapped.split('@')[0].replace(/[^0-9]/g, '');
-                if (mNum.startsWith('62') && mNum.length >= 10) {
-                    return `+62 ${mNum.slice(2, 5)}-${mNum.slice(5, 9)}-${mNum.slice(9)}`;
+            if (this.store.lidMap) {
+                const mapped = this.store.lidMap[normJid] || this.store.lidMap[participantJid];
+                if (mapped && typeof mapped === 'string') {
+                    let mappedNorm = mapped;
+                    try { mappedNorm = jidNormalizedUser(mapped) || mapped; } catch (e) {}
+                    const mc = this.store.contacts && (this.store.contacts[mapped] || this.store.contacts[mappedNorm]);
+                    if (mc?.name && typeof mc.name === 'string' && !mc.name.match(/^\d{10,}$/)) return mc.name;
+                    if (mc?.notify && typeof mc.notify === 'string') return mc.notify;
+                    if (mc?.verifiedName && typeof mc.verifiedName === 'string') return mc.verifiedName;
+                    const mNum = mapped.split('@')[0].replace(/[^0-9]/g, '');
+                    if (mNum.startsWith('62') && mNum.length >= 10) {
+                        return `+62 ${mNum.slice(2, 5)}-${mNum.slice(5, 9)}-${mNum.slice(9)}`;
+                    }
+                    if (mNum.startsWith('0') && mNum.length >= 10) {
+                        return `0${mNum.slice(1, 4)}-${mNum.slice(4, 8)}-${mNum.slice(8)}`;
+                    }
+                    if (mNum.length >= 7) return `+${mNum}`;
                 }
-                if (mNum.startsWith('0') && mNum.length >= 10) {
-                    return `0${mNum.slice(1, 4)}-${mNum.slice(4, 8)}-${mNum.slice(8)}`;
+            }
+
+            const num = (normJid.includes('@') ? normJid.split('@')[0] : normJid).replace(/[^0-9]/g, '');
+            if (normJid.endsWith('@s.whatsapp.net')) {
+                if (num.startsWith('62') && num.length >= 10) {
+                    return `+62 ${num.slice(2, 5)}-${num.slice(5, 9)}-${num.slice(9)}`;
                 }
-                if (mNum.length >= 7) return `+${mNum}`;
+                if (num.startsWith('0') && num.length >= 10) {
+                    return `0${num.slice(1, 4)}-${num.slice(4, 8)}-${num.slice(8)}`;
+                }
+                if (num.length >= 7) return `+${num}`;
             }
-        }
 
-        const num = normJid.split('@')[0].replace(/[^0-9]/g, '');
-        if (normJid.endsWith('@s.whatsapp.net')) {
-            if (num.startsWith('62') && num.length >= 10) {
-                return `+62 ${num.slice(2, 5)}-${num.slice(5, 9)}-${num.slice(9)}`;
-            }
-            if (num.startsWith('0') && num.length >= 10) {
-                return `0${num.slice(1, 4)}-${num.slice(4, 8)}-${num.slice(8)}`;
-            }
-            if (num.length >= 7) return `+${num}`;
+            if (c?.name && typeof c.name === 'string') return c.name;
+            return num || (normJid.includes('@') ? normJid.split('@')[0] : normJid);
+        } catch (e) {
+            return typeof participantJid === 'string' ? participantJid.split('@')[0] : '';
         }
-
-        if (c?.name) return c.name;
-        return num || normJid.split('@')[0];
     }
 
     // Merge two duplicate chat histories (e.g. LID into Phone Number JID)
