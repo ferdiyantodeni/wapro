@@ -12,7 +12,8 @@ const {
     DisconnectReason,
     fetchLatestBaileysVersion,
     jidNormalizedUser,
-    downloadMediaMessage
+    downloadMediaMessage,
+    Browsers
 } = require('@whiskeysockets/baileys');
 
 const app = express();
@@ -128,6 +129,28 @@ function extractMessageText(msg) {
            '';
 }
 
+// Persistent msgRetryCounterCache across reconnects to prevent infinite decryption loops
+const sessionRetryCaches = new Map();
+function getRetryCache(sessionId) {
+    if (!sessionRetryCaches.has(sessionId)) {
+        sessionRetryCaches.set(sessionId, {
+            _cache: new Map(),
+            get(key) { return this._cache.get(key); },
+            set(key, val) {
+                this._cache.set(key, val);
+                if (this._cache.size > 3000) {
+                    const first = this._cache.keys().next().value;
+                    this._cache.delete(first);
+                }
+            },
+            del(key) { this._cache.delete(key); },
+            flushAll() { this._cache.clear(); },
+            close() {}
+        });
+    }
+    return sessionRetryCaches.get(sessionId);
+}
+
 // WhatsAppSession Class representing one WhatsApp user / account
 class WhatsAppSession {
     constructor(sessionId) {
@@ -147,19 +170,7 @@ class WhatsAppSession {
         this.wsClients = new Set();
         this.isStarting = false;
 
-        this.msgRetryCounterCache = {
-            _cache: new Map(),
-            get(key) { return this._cache.get(key); },
-            set(key, val) {
-                this._cache.set(key, val);
-                if (this._cache.size > 2000) {
-                    const first = this._cache.keys().next().value;
-                    this._cache.delete(first);
-                }
-            },
-            del(key) { this._cache.delete(key); },
-            flushAll() { this._cache.clear(); }
-        };
+        this.msgRetryCounterCache = getRetryCache(sessionId);
 
         this.store = {
             chats: {},
@@ -232,12 +243,30 @@ class WhatsAppSession {
         }
     }
 
-    saveStore() {
-        try {
-            fs.writeFileSync(this.dataFile, JSON.stringify(this.store, null, 2), 'utf-8');
-        } catch (e) {
-            console.error(`[${this.sessionId}] Error save store:`, e.message);
+    saveStore(immediate = false) {
+        if (immediate) {
+            if (this._saveTimeout) {
+                clearTimeout(this._saveTimeout);
+                this._saveTimeout = null;
+            }
+            try {
+                fs.writeFileSync(this.dataFile, JSON.stringify(this.store), 'utf-8');
+            } catch (e) {
+                console.error(`[${this.sessionId}] Error save store (immediate):`, e.message);
+            }
+            return;
         }
+
+        if (this._saveTimeout) return;
+        this._saveTimeout = setTimeout(async () => {
+            this._saveTimeout = null;
+            try {
+                const data = JSON.stringify(this.store);
+                await fs.promises.writeFile(this.dataFile, data, 'utf-8');
+            } catch (e) {
+                console.error(`[${this.sessionId}] Error save store (debounced):`, e.message);
+            }
+        }, 800);
     }
 
     // Purge ghost/empty chat stubs synced from initial WhatsApp history
@@ -446,29 +475,9 @@ class WhatsAppSession {
                     return pnJid;
                 }
             } catch (e) {}
-
-            // 4. Try scanning existing phone number chats via onWhatsApp
-            if (this.sock && this.connectionState === 'open') {
-                for (const pnJid of Object.keys(this.store.chats)) {
-                    if (pnJid.endsWith('@s.whatsapp.net')) {
-                        try {
-                            const results = await this.sock.onWhatsApp(pnJid);
-                            if (Array.isArray(results) && results[0]?.lid) {
-                                const lidKey = results[0].lid.includes('@') ? results[0].lid : `${results[0].lid}@lid`;
-                                this.store.lidMap[lidKey] = pnJid;
-                                this.store.lidMap[pnJid] = lidKey;
-                                if (lidKey === rawJid) {
-                                    this.mergeChats(rawJid, pnJid);
-                                    return pnJid;
-                                }
-                            }
-                        } catch (e) {}
-                    }
-                }
-            }
         }
 
-        // 5. If it's a @s.whatsapp.net, cache its LID
+        // 4. If it's a @s.whatsapp.net, cache its LID in background without blocking
         if (rawJid.endsWith('@s.whatsapp.net') && this.sock?.signalRepository?.lidMapping) {
             try {
                 const lid = await this.sock.signalRepository.lidMapping.getLIDForPN(rawJid);
@@ -491,17 +500,19 @@ class WhatsAppSession {
 
         const chatKeys = Object.keys(this.store.chats);
 
-        // Pre-fetch LIDs for all @s.whatsapp.net chats
-        for (const cJid of chatKeys) {
-            if (cJid.endsWith('@s.whatsapp.net')) {
-                try {
-                    const results = await this.sock.onWhatsApp(cJid);
-                    if (Array.isArray(results) && results[0]?.lid) {
-                        const lidKey = results[0].lid.includes('@') ? results[0].lid : `${results[0].lid}@lid`;
-                        this.store.lidMap[lidKey] = cJid;
-                        this.store.lidMap[cJid] = lidKey;
-                    }
-                } catch (e) {}
+        // Map any existing lid mappings from signalRepository if available
+        if (this.sock.signalRepository?.lidMapping) {
+            for (const cJid of chatKeys) {
+                if (cJid.endsWith('@lid') && !this.store.lidMap[cJid]) {
+                    try {
+                        const pn = await this.sock.signalRepository.lidMapping.getPNForLID(cJid);
+                        if (pn) {
+                            const pnJid = pn.includes('@') ? pn : `${pn}@s.whatsapp.net`;
+                            this.store.lidMap[cJid] = pnJid;
+                            this.store.lidMap[pnJid] = cJid;
+                        }
+                    } catch (e) {}
+                }
             }
         }
 
@@ -551,7 +562,7 @@ class WhatsAppSession {
     }
 
     async getMessageFromStore(key) {
-        if (!key || !key.id) return undefined;
+        if (!key || !key.id) return { conversation: '' };
         try {
             const rawJid = key.remoteJid;
             const normJid = rawJid ? jidNormalizedUser(rawJid) : null;
@@ -590,27 +601,27 @@ class WhatsAppSession {
 
             if (!m) {
                 console.log(`[${this.sessionId}] [RETRY] Message not found for key ID: ${key.id} (remoteJid: ${rawJid})`);
-                return undefined;
+                return { conversation: '' };
             }
 
             console.log(`[${this.sessionId}] [RETRY] Successfully found message for key ID: ${key.id} to satisfy recipient decrypt retry`);
 
             // If rawMessage proto is available, always return it directly
             if (m.rawMessage) {
-                return m.rawMessage;
+                return m.rawMessage.message || m.rawMessage;
             }
 
             // If pure text message
-            if (m.text && (!m.msgType || m.msgType === 'text')) {
+            if (m.text) {
                 return {
                     conversation: m.text
                 };
             }
 
-            return undefined;
+            return { conversation: '' };
         } catch (err) {
             console.error(`[${this.sessionId}] Error in getMessageFromStore:`, err.message);
-            return undefined;
+            return { conversation: '' };
         }
     }
 
@@ -630,12 +641,28 @@ class WhatsAppSession {
                 logger,
                 printQRInTerminal: (this.sessionId === 'default'),
                 auth: state,
-                browser: ['WaPro Desktop', 'Chrome', '124.0.0.0'],
-                syncFullHistory: true,
+                browser: Browsers.ubuntu('Chrome'),
+                syncFullHistory: false,
+                shouldSyncHistoryMessage: () => false,
                 generateHighQualityLinkPreview: true,
                 msgRetryCounterCache: this.msgRetryCounterCache,
                 maxMsgRetryCount: 5,
                 getMessage: async (key) => this.getMessageFromStore(key),
+                patchMessageBeforeSending: (msg) => {
+                    try {
+                        if (typeof this.sock?.uploadPreKeysToServerIfRequired === 'function') {
+                            this.sock.uploadPreKeysToServerIfRequired().catch(() => {});
+                        }
+                    } catch (e) {}
+                    return msg;
+                },
+                cachedGroupMetadata: async (jid) => {
+                    try {
+                        return await this.sock?.groupMetadata(jid);
+                    } catch (e) {
+                        return undefined;
+                    }
+                },
                 keepAliveIntervalMs: 25000,
                 defaultQueryTimeoutMs: undefined
             });
@@ -683,6 +710,13 @@ class WhatsAppSession {
                     };
                     this.broadcast('connection', { state: 'open', user: this.currentUser });
                     this.isStarting = false;
+
+                    // Upload pre-keys to WhatsApp servers if count is low, ensuring phones can decrypt messages
+                    try {
+                        if (typeof this.sock?.uploadPreKeysToServerIfRequired === 'function') {
+                            await this.sock.uploadPreKeysToServerIfRequired();
+                        }
+                    } catch (e) {}
 
                     setTimeout(() => {
                         this.cleanupAndMergeLids();

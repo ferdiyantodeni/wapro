@@ -726,7 +726,10 @@ function handleWsEvent(evt, data) {
             grabEmojisFromText(message.text);
         }
 
-        if (currentChatJid === jid) {
+        const isCurrentChat = (currentChatJid === jid) || 
+                              (currentChatJid && jid && currentChatJid.split('@')[0] === jid.split('@')[0]);
+
+        if (isCurrentChat) {
             currentChatMessages.push(message);
             appendMessage(message);
             scrollToBottom();
