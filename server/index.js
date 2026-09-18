@@ -1118,7 +1118,6 @@ class WhatsAppSession {
                     if (this.store.messages[jid].some(m => m.id === msgObj.id)) continue;
                     this.store.messages[jid].push(msgObj);
 
-                    const isGroup = jid.endsWith('@g.us');
                     let chatName = this.store.chats[jid]?.name;
                     if (isGroup) {
                         if (!chatName || chatName === 'Grup' || chatName === senderName) {
