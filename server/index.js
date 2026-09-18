@@ -9,6 +9,7 @@ const pino = require('pino');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
+    makeCacheableSignalKeyStore,
     DisconnectReason,
     fetchLatestBaileysVersion,
     jidNormalizedUser,
@@ -172,6 +173,8 @@ class WhatsAppSession {
 
         this.msgRetryCounterCache = getRetryCache(sessionId);
 
+        this.recentSentMessages = new Map();
+
         this.store = {
             chats: {},
             messages: {},
@@ -180,6 +183,45 @@ class WhatsAppSession {
         };
 
         this.loadStore();
+    }
+
+    storeSentMessage(id, messageProto) {
+        if (!id || !messageProto) return;
+        this.recentSentMessages.set(id, messageProto);
+        if (this.recentSentMessages.size > 2000) {
+            const first = this.recentSentMessages.keys().next().value;
+            this.recentSentMessages.delete(first);
+        }
+    }
+
+    // Repair primary phone encryption session by purging stale session files for our own number
+    async repairPrimarySession() {
+        console.log(`[${this.sessionId}] Repairing primary device encryption session...`);
+        try {
+            if (!this.authDir || !fs.existsSync(this.authDir)) return { cleaned: 0 };
+            const myNum = (this.currentUser?.id || this.sock?.user?.id || '').split('@')[0].split(':')[0];
+            const files = fs.readdirSync(this.authDir);
+            let cleaned = 0;
+            for (const file of files) {
+                // Remove session-*.json for our own number (device 0 peer sync), NEVER touch creds.json
+                if (file.startsWith('session-') && !file.includes('creds')) {
+                    if (!myNum || file.includes(myNum)) {
+                        try {
+                            fs.unlinkSync(path.join(this.authDir, file));
+                            cleaned++;
+                        } catch (e) {}
+                    }
+                }
+            }
+            console.log(`[${this.sessionId}] Cleared ${cleaned} stale session files for primary device.`);
+            if (this.sock && typeof this.sock.uploadPreKeysToServerIfRequired === 'function') {
+                await this.sock.uploadPreKeysToServerIfRequired();
+            }
+            return { cleaned };
+        } catch (e) {
+            console.error(`[${this.sessionId}] Error repairing session:`, e);
+            throw e;
+        }
     }
 
     loadStore() {
@@ -562,8 +604,14 @@ class WhatsAppSession {
     }
 
     async getMessageFromStore(key) {
-        if (!key || !key.id) return { conversation: '' };
+        if (!key || !key.id) return undefined;
         try {
+            // 1. Instant check in untouched raw sent proto cache
+            if (this.recentSentMessages && this.recentSentMessages.has(key.id)) {
+                console.log(`[${this.sessionId}] [RETRY] Found in recentSentMessages for key ID: ${key.id}`);
+                return this.recentSentMessages.get(key.id);
+            }
+
             const rawJid = key.remoteJid;
             const normJid = rawJid ? jidNormalizedUser(rawJid) : null;
             const mappedJid = (this.store.lidMap && rawJid) ? this.store.lidMap[rawJid] : null;
@@ -571,22 +619,22 @@ class WhatsAppSession {
 
             let m = null;
 
-            // 1. Check direct remoteJid
+            // 2. Check direct remoteJid
             if (rawJid && this.store.messages[rawJid]) {
                 m = this.store.messages[rawJid].find(item => item.id === key.id);
             }
-            // 2. Check normalized remoteJid
+            // 3. Check normalized remoteJid
             if (!m && normJid && this.store.messages[normJid]) {
                 m = this.store.messages[normJid].find(item => item.id === key.id);
             }
-            // 3. Check mapped LID or Phone JID
+            // 4. Check mapped LID or Phone JID
             if (!m && mappedJid && this.store.messages[mappedJid]) {
                 m = this.store.messages[mappedJid].find(item => item.id === key.id);
             }
             if (!m && mappedNormJid && this.store.messages[mappedNormJid]) {
                 m = this.store.messages[mappedNormJid].find(item => item.id === key.id);
             }
-            // 4. Global fallback search across all stored chats
+            // 5. Global fallback search across all stored chats
             if (!m) {
                 for (const msgs of Object.values(this.store.messages || {})) {
                     if (Array.isArray(msgs)) {
@@ -601,7 +649,7 @@ class WhatsAppSession {
 
             if (!m) {
                 console.log(`[${this.sessionId}] [RETRY] Message not found for key ID: ${key.id} (remoteJid: ${rawJid})`);
-                return { conversation: '' };
+                return undefined;
             }
 
             console.log(`[${this.sessionId}] [RETRY] Successfully found message for key ID: ${key.id} to satisfy recipient decrypt retry`);
@@ -618,10 +666,10 @@ class WhatsAppSession {
                 };
             }
 
-            return { conversation: '' };
+            return undefined;
         } catch (err) {
             console.error(`[${this.sessionId}] Error in getMessageFromStore:`, err.message);
-            return { conversation: '' };
+            return undefined;
         }
     }
 
@@ -640,7 +688,10 @@ class WhatsAppSession {
                 version,
                 logger,
                 printQRInTerminal: (this.sessionId === 'default'),
-                auth: state,
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, logger)
+                },
                 browser: Browsers.ubuntu('Chrome'),
                 syncFullHistory: false,
                 shouldSyncHistoryMessage: () => false,
@@ -1444,6 +1495,10 @@ app.post('/api/messages/send', async (req, res) => {
         const sent = await s.sock.sendMessage(targetJid, msgPayload, quotedOptions);
         const timestamp = Date.now();
 
+        if (sent?.key?.id && sent?.message) {
+            s.storeSentMessage(sent.key.id, sent.message);
+        }
+
         try {
             const lid = await s.sock.signalRepository?.lidMapping?.getLIDForPN(canonicalJid);
             if (lid) {
@@ -1545,6 +1600,9 @@ app.post('/api/messages/send-media', async (req, res) => {
         }
 
         const timestamp = Date.now();
+        if (sent?.key?.id && sent?.message) {
+            s.storeSentMessage(sent.key.id, sent.message);
+        }
         const msgObj = {
             id: sent.key.id,
             fromMe: true,
@@ -1608,6 +1666,9 @@ app.post('/api/messages/send-sticker', async (req, res) => {
 
         const sent = await s.sock.sendMessage(targetJid, { sticker: buffer }, quotedOptions);
         const timestamp = Date.now();
+        if (sent?.key?.id && sent?.message) {
+            s.storeSentMessage(sent.key.id, sent.message);
+        }
 
         if (!s.store.messages[canonicalJid]) s.store.messages[canonicalJid] = [];
         const msgObj = {
@@ -1687,6 +1748,9 @@ app.post('/api/messages/send-contact', async (req, res) => {
         );
 
         const timestamp = Date.now();
+        if (sent?.key?.id && sent?.message) {
+            s.storeSentMessage(sent.key.id, sent.message);
+        }
         const contactObj = {
             name: contactName,
             phone: '+' + cleanPhone,
@@ -1911,6 +1975,17 @@ app.post('/api/logout', async (req, res) => {
     try {
         await s.logout();
         res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 8. Repair primary device encryption session
+app.post('/api/session/repair', async (req, res) => {
+    const s = req.sessionInstance;
+    try {
+        const result = await s.repairPrimarySession();
+        res.json({ success: true, message: 'Sesi enkripsi dengan HP utama berhasil disinkronkan ulang', ...result });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

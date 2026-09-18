@@ -2515,5 +2515,29 @@ btnLogout.addEventListener('click', async () => {
     }
 });
 
+const btnRepairSession = document.getElementById('btnRepairSession');
+if (btnRepairSession) {
+    btnRepairSession.addEventListener('click', async () => {
+        btnRepairSession.disabled = true;
+        const icon = btnRepairSession.querySelector('i');
+        if (icon) icon.classList.add('fa-spin');
+        showToast('Menyinkronkan ulang enkripsi dengan HP utama... 🔄');
+        try {
+            const res = await sessionFetch('/api/session/repair', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Enkripsi HP berhasil disinkronkan ulang ✨');
+            } else {
+                showToast('Gagal: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message);
+        } finally {
+            btnRepairSession.disabled = false;
+            if (icon) icon.classList.remove('fa-spin');
+        }
+    });
+}
+
 // Initial Boot: Connect WebSocket for this session
 initWebSocket();
