@@ -73,6 +73,11 @@
                         <h3 id="activeContactName">Kontak</h3>
                         <span class="contact-subtitle" id="activeContactSubtitle">WhatsApp</span>
                     </div>
+                    <div class="chat-header-actions">
+                        <button type="button" class="header-icon-btn" id="btnChatCall" title="Info Panggilan / Hubungi via Telepon">
+                            <i class="fa-solid fa-phone"></i>
+                        </button>
+                    </div>
                 </header>
 
                 <div class="messages-container" id="messagesContainer"></div>
@@ -374,11 +379,54 @@
         <div class="lightbox-caption" id="lightboxCaption" style="display: none;"></div>
     </div>
 
+    <!-- Incoming Call Floating Banner Modal -->
+    <div class="incoming-call-banner" id="incomingCallBanner" style="display: none;">
+        <div class="call-banner-glow"></div>
+        <div class="call-banner-content">
+            <div class="call-banner-avatar" id="callBannerAvatar">U</div>
+            <div class="call-banner-info">
+                <div class="call-banner-status">
+                    <i class="fa-solid fa-phone-volume call-ringing-icon"></i>
+                    <span id="callBannerType">Panggilan Suara WhatsApp</span>
+                </div>
+                <h4 id="callBannerName">Nama Pemanggil</h4>
+                <span class="call-banner-number" id="callBannerNumber">+62 812-xxxx-xxxx</span>
+            </div>
+            <div class="call-banner-actions">
+                <button type="button" class="btn-call-reject" id="btnCallReject" title="Tolak Panggilan">
+                    <i class="fa-solid fa-phone-slash"></i> Tolak
+                </button>
+                <button type="button" class="btn-call-reply" id="btnCallReplyToggle" title="Tolak dan Balas Pesan">
+                    <i class="fa-solid fa-comment-dots"></i> Balas Chat
+                </button>
+                <button type="button" class="btn-call-dismiss" id="btnCallDismiss" title="Tutup Notifikasi">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Quick Reply Drawer inside Call Banner -->
+        <div class="call-quick-reply-drawer" id="callQuickReplyDrawer" style="display: none;">
+            <span class="quick-reply-title">Pilih balasan cepat atau ketik sendiri:</span>
+            <div class="quick-reply-chips">
+                <button type="button" class="chip-reply" data-text="Maaf, saya sedang tidak bisa mengangkat telepon.">"Sedang tidak bisa angkat"</button>
+                <button type="button" class="chip-reply" data-text="Ada hal penting? Silakan chat di sini ya.">"Ada apa? Chat saja ya"</button>
+                <button type="button" class="chip-reply" data-text="Saya sedang di jalan/berkendara. Nanti saya hubungi kembali.">"Sedang di jalan"</button>
+            </div>
+            <div class="quick-reply-input-row">
+                <input type="text" id="callQuickReplyInput" placeholder="Ketik pesan balasan penolakan..." value="Maaf, sedang tidak bisa mengangkat telepon. Silakan chat di sini.">
+                <button type="button" class="btn-send-reject-reply" id="btnSendRejectReply">
+                    <i class="fa-solid fa-paper-plane"></i> Tolak & Kirim
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification -->
     <div class="toast-notification" id="toastNotification" style="display: none;">
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=5.5"></script>
+    <script src="app.js?v=5.6"></script>
 </body>
 </html>

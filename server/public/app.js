@@ -884,6 +884,10 @@ function handleWsEvent(evt, data) {
                 });
             }
         }
+    } else if (evt === 'incoming_call') {
+        showIncomingCall(data);
+    } else if (evt === 'call_ended') {
+        hideIncomingCall(data);
     }
 }
 
@@ -2712,6 +2716,203 @@ if (btnResetSession) {
             btnResetSession.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Reset Sesi Baru';
         }
     });
+}
+
+// ==========================================
+// Incoming Call Management & Ringtone Audio
+// ==========================================
+let activeIncomingCall = null;
+let ringtoneInterval = null;
+let ringtoneAudioCtx = null;
+
+function playRingtone() {
+    stopRingtone();
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        ringtoneAudioCtx = new AudioCtx();
+
+        const playTone = () => {
+            if (!ringtoneAudioCtx || ringtoneAudioCtx.state === 'closed') return;
+            const now = ringtoneAudioCtx.currentTime;
+            
+            const osc1 = ringtoneAudioCtx.createOscillator();
+            const osc2 = ringtoneAudioCtx.createOscillator();
+            const gain = ringtoneAudioCtx.createGain();
+
+            osc1.type = 'sine';
+            osc2.type = 'sine';
+            osc1.frequency.setValueAtTime(440, now);
+            osc2.frequency.setValueAtTime(480, now);
+
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.setValueAtTime(0.08, now + 1.2);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            gain.connect(ringtoneAudioCtx.destination);
+
+            osc1.start(now);
+            osc2.start(now);
+            osc1.stop(now + 1.3);
+            osc2.stop(now + 1.3);
+        };
+
+        playTone();
+        ringtoneInterval = setInterval(playTone, 2500);
+    } catch (e) {
+        console.warn('Ringtone error:', e);
+    }
+}
+
+function stopRingtone() {
+    if (ringtoneInterval) {
+        clearInterval(ringtoneInterval);
+        ringtoneInterval = null;
+    }
+    if (ringtoneAudioCtx) {
+        try { ringtoneAudioCtx.close(); } catch (e) {}
+        ringtoneAudioCtx = null;
+    }
+}
+
+const incomingCallBanner = document.getElementById('incomingCallBanner');
+const callBannerAvatar = document.getElementById('callBannerAvatar');
+const callBannerType = document.getElementById('callBannerType');
+const callBannerName = document.getElementById('callBannerName');
+const callBannerNumber = document.getElementById('callBannerNumber');
+const btnCallReject = document.getElementById('btnCallReject');
+const btnCallReplyToggle = document.getElementById('btnCallReplyToggle');
+const btnCallDismiss = document.getElementById('btnCallDismiss');
+const callQuickReplyDrawer = document.getElementById('callQuickReplyDrawer');
+const callQuickReplyInput = document.getElementById('callQuickReplyInput');
+const btnSendRejectReply = document.getElementById('btnSendRejectReply');
+
+function showIncomingCall(callData) {
+    if (!incomingCallBanner) return;
+    activeIncomingCall = callData;
+
+    const callerName = callData.callerName || callData.from?.split('@')[0] || 'Seseorang';
+    const cleanNum = (callData.from || '').split('@')[0];
+    const formattedNum = cleanNum.startsWith('62') ? `+62 ${cleanNum.slice(2, 5)}-${cleanNum.slice(5, 8)}-${cleanNum.slice(8)}` : (cleanNum ? `+${cleanNum}` : '');
+
+    if (callBannerAvatar) {
+        callBannerAvatar.textContent = getAvatarInitials(callerName);
+        callBannerAvatar.style.background = getAvatarBg(callData.from || callerName);
+    }
+    if (callBannerName) callBannerName.textContent = callerName;
+    if (callBannerNumber) callBannerNumber.textContent = formattedNum;
+    if (callBannerType) {
+        callBannerType.textContent = callData.isVideo ? 'Panggilan Video WhatsApp' : 'Panggilan Suara WhatsApp';
+    }
+
+    if (callQuickReplyDrawer) callQuickReplyDrawer.style.display = 'none';
+    incomingCallBanner.style.display = 'flex';
+
+    playRingtone();
+
+    if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+        new Notification('Panggilan WhatsApp Masuk', {
+            body: `${callerName} sedang memanggil Anda (${callData.isVideo ? 'Video' : 'Suara'})`,
+            icon: '/favicon.ico'
+        });
+    }
+}
+
+function hideIncomingCall(callData) {
+    if (callData && activeIncomingCall && callData.id && activeIncomingCall.id !== callData.id) {
+        return;
+    }
+    activeIncomingCall = null;
+    stopRingtone();
+    if (incomingCallBanner) incomingCallBanner.style.display = 'none';
+    if (callQuickReplyDrawer) callQuickReplyDrawer.style.display = 'none';
+}
+
+if (btnCallDismiss) {
+    btnCallDismiss.onclick = () => {
+        stopRingtone();
+        if (incomingCallBanner) incomingCallBanner.style.display = 'none';
+    };
+}
+
+if (btnCallReject) {
+    btnCallReject.onclick = async () => {
+        if (!activeIncomingCall) return;
+        const call = activeIncomingCall;
+        hideIncomingCall();
+        showToast('Menolak panggilan... 📵');
+        try {
+            await sessionFetch('/api/calls/reject', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ callId: call.id, from: call.from })
+            });
+            showToast('Panggilan berhasil ditolak');
+        } catch (e) {
+            console.error('Error reject call:', e);
+        }
+    };
+}
+
+if (btnCallReplyToggle) {
+    btnCallReplyToggle.onclick = () => {
+        if (!callQuickReplyDrawer) return;
+        const isShown = callQuickReplyDrawer.style.display === 'flex';
+        callQuickReplyDrawer.style.display = isShown ? 'none' : 'flex';
+        if (!isShown && callQuickReplyInput) {
+            callQuickReplyInput.focus();
+        }
+    };
+}
+
+document.querySelectorAll('.chip-reply').forEach(btn => {
+    btn.onclick = () => {
+        if (callQuickReplyInput && btn.dataset.text) {
+            callQuickReplyInput.value = btn.dataset.text;
+            callQuickReplyInput.focus();
+        }
+    };
+});
+
+if (btnSendRejectReply) {
+    btnSendRejectReply.onclick = async () => {
+        if (!activeIncomingCall) return;
+        const call = activeIncomingCall;
+        const text = callQuickReplyInput ? callQuickReplyInput.value.trim() : '';
+        hideIncomingCall();
+        showToast('Menolak & mengirim pesan balasan... ✉️');
+        try {
+            await sessionFetch('/api/calls/reject-with-message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ callId: call.id, from: call.from, text })
+            });
+            showToast('Panggilan ditolak & pesan balasan terkirim!');
+        } catch (e) {
+            console.error('Error reject with message:', e);
+        }
+    };
+}
+
+// Chat Header Call Button (Quick Info / Tel)
+const btnChatCall = document.getElementById('btnChatCall');
+if (btnChatCall) {
+    btnChatCall.onclick = () => {
+        if (!currentChatJid) return;
+        const isGroup = currentChatJid.endsWith('@g.us');
+        if (isGroup) {
+            alert('Panggilan langsung tidak tersedia untuk grup. Silakan hubungi anggota secara privat.');
+            return;
+        }
+        const phone = currentChatJid.split('@')[0];
+        const chat = allChats.find(c => c.jid === currentChatJid);
+        const name = chat?.name || phone;
+        if (confirm(`Hubungi ${name} (+${phone}) via panggilan suara perangkat?\n\n(Catatan: Panggilan suara WhatsApp langsung dikelola oleh aplikasi HP. Klik OK untuk membuka dialer telepon).`)) {
+            window.open(`tel:+${phone}`, '_blank');
+        }
+    };
 }
 
 // Initial Boot: Immediate HTTP sync + background polling loop + WebSocket

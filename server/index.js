@@ -1114,6 +1114,36 @@ class WhatsAppSession {
                 this.saveStore();
             });
 
+            // Listen for WhatsApp calls (incoming/missed/timeout)
+            this.sock.ev.on('call', async (calls) => {
+                for (const call of calls) {
+                    if (!call) continue;
+                    const fromJid = call.from;
+                    const canonicalFrom = await this.resolveCanonicalJid(fromJid);
+                    const callerName = this.getContactDisplayName(canonicalFrom) || this.getContactDisplayName(fromJid) || fromJid.split('@')[0];
+
+                    if (call.status === 'offer') {
+                        this.log(`[CALL] Panggilan masuk dari ${callerName} (${fromJid}) [${call.isVideo ? 'Video' : 'Suara'}]`);
+                        this.broadcast('incoming_call', {
+                            id: call.id,
+                            from: fromJid,
+                            canonicalFrom,
+                            callerName,
+                            isVideo: Boolean(call.isVideo),
+                            isGroup: Boolean(call.isGroup),
+                            timestamp: Date.now()
+                        });
+                    } else if (['timeout', 'reject', 'accept'].includes(call.status)) {
+                        this.log(`[CALL] Panggilan dari ${callerName} selesai / status: ${call.status}`);
+                        this.broadcast('call_ended', {
+                            id: call.id,
+                            from: fromJid,
+                            status: call.status
+                        });
+                    }
+                }
+            });
+
             // Listen for message status updates (e.g. read receipts / centang biru)
             this.sock.ev.on('messages.update', async (updates) => {
                 for (const update of updates) {
@@ -2232,6 +2262,50 @@ app.post('/api/session/repair', async (req, res) => {
         const result = await s.repairPrimarySession();
         res.json({ success: true, message: 'Sesi enkripsi dengan HP utama berhasil disinkronkan ulang', ...result });
     } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 9. Call Management: Reject Incoming Call
+app.post('/api/calls/reject', async (req, res) => {
+    const s = req.sessionInstance;
+    const { callId, from } = req.body;
+    if (!callId || !from) return res.status(400).json({ error: 'callId dan from harus diisi' });
+
+    try {
+        if (s.sock && typeof s.sock.rejectCall === 'function') {
+            await s.sock.rejectCall(callId, from);
+            s.log(`[CALL] Panggilan ${callId} dari ${from} ditolak manual oleh user via Web.`);
+            res.json({ success: true });
+        } else {
+            res.status(503).json({ error: 'Koneksi WhatsApp belum siap' });
+        }
+    } catch (e) {
+        console.error(`[${s.sessionId}] Error rejecting call:`, e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 9b. Call Management: Reject and Send Chat Message
+app.post('/api/calls/reject-with-message', async (req, res) => {
+    const s = req.sessionInstance;
+    const { callId, from, text } = req.body;
+    if (!callId || !from) return res.status(400).json({ error: 'callId dan from harus diisi' });
+
+    try {
+        if (s.sock && typeof s.sock.rejectCall === 'function') {
+            await s.sock.rejectCall(callId, from).catch(() => {});
+            s.log(`[CALL] Panggilan ${callId} dari ${from} ditolak.`);
+        }
+        if (text && text.trim() && s.sock) {
+            const canonicalJid = await s.resolveCanonicalJid(from);
+            const targetJid = canonicalJid || from;
+            await s.sock.sendMessage(targetJid, { text: text.trim() });
+            s.log(`[CALL] Pesan penolakan terkirim ke ${targetJid}: "${text.trim()}"`);
+        }
+        res.json({ success: true });
+    } catch (e) {
+        console.error(`[${s.sessionId}] Error reject with message:`, e.message);
         res.status(500).json({ error: e.message });
     }
 });
