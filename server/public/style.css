@@ -722,6 +722,7 @@ body {
   text-align: left;
   border: 1px solid #2a3942;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
+  overflow-y: auto;
 }
 
 .modal-edit-header {
@@ -855,8 +856,10 @@ body {
   gap: 8px;
   background-color: #182229;
   padding: 10px 12px;
-  max-height: 130px;
+  min-height: 100px;
+  max-height: 160px;
   overflow-y: auto;
+  border-top: 1px solid #222e35;
 }
 
 .edit-emoji-item {
@@ -885,8 +888,8 @@ body {
   line-height: 22px;
   outline: none;
   resize: vertical;
-  min-height: 220px;
-  max-height: 52vh;
+  min-height: 140px;
+  max-height: 48vh;
   font-family: inherit;
   white-space: pre-wrap;
   box-sizing: border-box;

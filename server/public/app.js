@@ -528,50 +528,62 @@ function grabEmojisFromText(text) {
 function renderEmojiTrays() {
     if (emojiTray) {
         emojiTray.innerHTML = '';
-        const list = (activeEmojiCat === 'recent') ? savedEmojis : (UNICODE_EMOJI_CATEGORIES[activeEmojiCat] || []);
-        if (list.length === 0 && activeEmojiCat === 'recent') {
-            emojiTray.innerHTML = '<span style="color:#8696a0;font-size:12.5px;padding:8px 12px;width:100%;text-align:center;">Belum ada emoji terkini. Pilih kategori lain atau ketik emoji!</span>';
-        } else {
-            list.forEach(emoji => {
-                const span = document.createElement('span');
-                span.className = 'emoji-item';
-                span.textContent = emoji;
-                span.title = 'Klik untuk masukkan ' + emoji;
-                span.onclick = () => {
-                    messageInput.value += emoji;
-                    autoResizeTextarea();
-                    messageInput.focus();
-                    grabEmojisFromText(emoji);
-                };
-                emojiTray.appendChild(span);
-            });
+        let cat = activeEmojiCat;
+        if (cat === 'recent' && (!savedEmojis || savedEmojis.length === 0)) {
+            cat = 'smileys';
+            activeEmojiCat = 'smileys';
+            if (emojiCategoryBar) {
+                emojiCategoryBar.querySelectorAll('.emoji-cat-btn').forEach(b => {
+                    b.classList.toggle('active', b.dataset.cat === 'smileys');
+                });
+            }
         }
+        const list = (cat === 'recent') ? savedEmojis : (UNICODE_EMOJI_CATEGORIES[cat] || []);
+        list.forEach(emoji => {
+            const span = document.createElement('span');
+            span.className = 'emoji-item';
+            span.textContent = emoji;
+            span.title = 'Klik untuk masukkan ' + emoji;
+            span.onclick = () => {
+                messageInput.value += emoji;
+                autoResizeTextarea();
+                messageInput.focus();
+                grabEmojisFromText(emoji);
+            };
+            emojiTray.appendChild(span);
+        });
     }
 
     if (editEmojiTray) {
         editEmojiTray.innerHTML = '';
-        const list = (activeEditEmojiCat === 'recent') ? savedEmojis : (UNICODE_EMOJI_CATEGORIES[activeEditEmojiCat] || []);
-        if (list.length === 0 && activeEditEmojiCat === 'recent') {
-            editEmojiTray.innerHTML = '<span style="color:#8696a0;font-size:12px;padding:8px 12px;width:100%;text-align:center;">Belum ada emoji terkini. Pilih kategori lain!</span>';
-        } else {
-            list.forEach(emoji => {
-                const span = document.createElement('span');
-                span.className = 'edit-emoji-item';
-                span.textContent = emoji;
-                span.title = 'Klik untuk masukkan ' + emoji;
-                span.onclick = () => {
-                    const char = emoji;
-                    const start = editMessageInput.selectionStart;
-                    const end = editMessageInput.selectionEnd;
-                    const val = editMessageInput.value;
-                    editMessageInput.value = val.substring(0, start) + char + val.substring(end);
-                    editMessageInput.selectionStart = editMessageInput.selectionEnd = start + char.length;
-                    editMessageInput.focus();
-                    grabEmojisFromText(emoji);
-                };
-                editEmojiTray.appendChild(span);
-            });
+        let cat = activeEditEmojiCat;
+        if (cat === 'recent' && (!savedEmojis || savedEmojis.length === 0)) {
+            cat = 'smileys';
+            activeEditEmojiCat = 'smileys';
+            if (editEmojiCatBar) {
+                editEmojiCatBar.querySelectorAll('.emoji-cat-btn').forEach(b => {
+                    b.classList.toggle('active', b.dataset.cat === 'smileys');
+                });
+            }
         }
+        const list = (cat === 'recent') ? savedEmojis : (UNICODE_EMOJI_CATEGORIES[cat] || []);
+        list.forEach(emoji => {
+            const span = document.createElement('span');
+            span.className = 'edit-emoji-item';
+            span.textContent = emoji;
+            span.title = 'Klik untuk masukkan ' + emoji;
+            span.onclick = () => {
+                const char = emoji;
+                const start = editMessageInput.selectionStart;
+                const end = editMessageInput.selectionEnd;
+                const val = editMessageInput.value;
+                editMessageInput.value = val.substring(0, start) + char + val.substring(end);
+                editMessageInput.selectionStart = editMessageInput.selectionEnd = start + char.length;
+                editMessageInput.focus();
+                grabEmojisFromText(emoji);
+            };
+            editEmojiTray.appendChild(span);
+        });
     }
 }
 
@@ -1535,7 +1547,8 @@ if (ctxEdit) {
         editMessageInput.value = msg.text || '';
         editModal.style.display = 'flex';
         editMessageInput.dataset.editMsgId = msg.id;
-        if (editEmojiTray) editEmojiTray.style.display = 'none';
+        if (editEmojiTrayContainer) editEmojiTrayContainer.style.display = 'none';
+        if (editEmojiTray) editEmojiTray.style.display = '';
         if (btnEditEmojiToggle) btnEditEmojiToggle.classList.remove('active');
 
         // Stage existing image if message has one
@@ -1568,7 +1581,7 @@ function resetEditModalState() {
     if (editImageFileInput) editImageFileInput.value = '';
     if (editImagePreviewBar) editImagePreviewBar.style.display = 'none';
     if (editEmojiTrayContainer) editEmojiTrayContainer.style.display = 'none';
-    if (editEmojiTray) editEmojiTray.style.display = 'none';
+    if (editEmojiTray) editEmojiTray.style.display = '';
     if (btnEditEmojiToggle) btnEditEmojiToggle.classList.remove('active');
 }
 
@@ -1646,10 +1659,17 @@ if (editMessageInput) {
 
 if (btnEditEmojiToggle) {
     btnEditEmojiToggle.onclick = () => {
-        const target = editEmojiTrayContainer || editEmojiTray;
-        const isShown = target.style.display === 'flex';
-        target.style.display = isShown ? 'none' : 'flex';
+        const isShown = editEmojiTrayContainer && editEmojiTrayContainer.style.display === 'flex';
+        if (editEmojiTrayContainer) {
+            editEmojiTrayContainer.style.display = isShown ? 'none' : 'flex';
+        }
+        if (editEmojiTray) {
+            editEmojiTray.style.display = isShown ? 'none' : 'flex';
+        }
         btnEditEmojiToggle.classList.toggle('active', !isShown);
+        if (!isShown) {
+            renderEmojiTrays();
+        }
     };
 }
 
