@@ -6,25 +6,68 @@ const fs = require('fs');
 const cors = require('cors');
 const qrcode = require('qrcode');
 const pino = require('pino');
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    makeCacheableSignalKeyStore,
-    DisconnectReason,
-    fetchLatestBaileysVersion,
-    jidNormalizedUser,
-    downloadMediaMessage,
-    Browsers
-} = require('@whiskeysockets/baileys');
+let makeWASocket;
+let useMultiFileAuthState;
+let makeCacheableSignalKeyStore;
+let DisconnectReason = {};
+let fetchLatestBaileysVersion;
+let downloadMediaMessage;
+let Browsers = { ubuntu: () => ['Ubuntu', 'Chrome', '20.0.04'] };
+
+let jidNormalizedUser = (jid) => {
+    if (!jid) return '';
+    return jid.replace(/:[0-9]+@/, '@');
+};
+
+const baileysPromise = import('@whiskeysockets/baileys').then(baileys => {
+    makeWASocket = baileys.default || baileys.makeWASocket;
+    useMultiFileAuthState = baileys.useMultiFileAuthState;
+    makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
+    DisconnectReason = baileys.DisconnectReason || {};
+    fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+    if (baileys.jidNormalizedUser) jidNormalizedUser = baileys.jidNormalizedUser;
+    downloadMediaMessage = baileys.downloadMediaMessage;
+    Browsers = baileys.Browsers || Browsers;
+    console.log('[BAILEYS] Module loaded successfully via dynamic import');
+    return baileys;
+}).catch(err => {
+    console.error('[FATAL] Failed to dynamically load @whiskeysockets/baileys:', err);
+    throw err;
+});
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: '/ws' });
+const wss = new WebSocket.Server({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+    const pathname = (request.url || '').split('?')[0];
+    if (pathname === '/ws' || pathname.endsWith('/ws')) {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
+    } else {
+        socket.destroy();
+    }
+});
+
+// Normalize sub-path routing (e.g. /wa or /wa/)
+app.use((req, res, next) => {
+    if (req.url === '/wa') {
+        return res.redirect(301, '/wa/');
+    }
+    if (req.url.startsWith('/wa/')) {
+        req.url = req.url.slice(3); // strips '/wa', keeping '/'
+    }
+    next();
+});
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Global exception safety to prevent 502 crashes
 process.on('uncaughtException', (err) => {
@@ -170,6 +213,9 @@ class WhatsAppSession {
         this.currentUser = null;
         this.wsClients = new Set();
         this.isStarting = false;
+        this.lastError = null;
+        this.lastDisconnect = null;
+        this.logs = [];
 
         this.msgRetryCounterCache = getRetryCache(sessionId);
 
@@ -183,6 +229,33 @@ class WhatsAppSession {
         };
 
         this.loadStore();
+    }
+
+    log(msg) {
+        const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        console.log(`[${this.sessionId}] ${msg}`);
+        this.logs.push(line);
+        if (this.logs.length > 50) this.logs.shift();
+    }
+
+    async reset() {
+        this.log('Resetting session auth...');
+        this.isStarting = false;
+        if (this.sock) {
+            try { this.sock.end(); } catch (e) {}
+            this.sock = null;
+        }
+        this.currentQR = null;
+        this.currentPairingCode = null;
+        this.connectionState = 'connecting';
+        try {
+            if (fs.existsSync(this.authDir)) {
+                fs.rmSync(this.authDir, { recursive: true, force: true });
+            }
+            fs.mkdirSync(this.authDir, { recursive: true });
+        } catch (e) {}
+        setTimeout(() => this.startWhatsApp(), 1000);
+        return { success: true, message: 'Sesi berhasil direset. Silakan tunggu beberapa detik...' };
     }
 
     storeSentMessage(id, messageProto) {
@@ -678,16 +751,27 @@ class WhatsAppSession {
         this.isStarting = true;
 
         try {
-            console.log(`[${this.sessionId}] Menghubungkan WhatsApp session...`);
+            await baileysPromise;
+            this.log('Menghubungkan WhatsApp session...');
             const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
-            const { version, isLatest } = await fetchLatestBaileysVersion();
+
+            let version = [2, 3000, 1043857760];
+            try {
+                const vResult = await Promise.race([
+                    fetchLatestBaileysVersion(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Version timeout')), 3500))
+                ]);
+                if (vResult?.version) version = vResult.version;
+            } catch (e) {
+                this.log(`Using fallback version: ${e.message}`);
+            }
 
             const logger = pino({ level: 'silent' });
 
             this.sock = makeWASocket({
                 version,
                 logger,
-                printQRInTerminal: (this.sessionId === 'default'),
+                printQRInTerminal: false,
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -698,6 +782,8 @@ class WhatsAppSession {
                 generateHighQualityLinkPreview: true,
                 msgRetryCounterCache: this.msgRetryCounterCache,
                 maxMsgRetryCount: 5,
+                connectTimeoutMs: 30000,
+                keepAliveIntervalMs: 25000,
                 getMessage: async (key) => this.getMessageFromStore(key),
                 patchMessageBeforeSending: (msg) => {
                     try {
@@ -714,7 +800,6 @@ class WhatsAppSession {
                         return undefined;
                     }
                 },
-                keepAliveIntervalMs: 25000,
                 defaultQueryTimeoutMs: undefined
             });
 
@@ -726,13 +811,16 @@ class WhatsAppSession {
                 if (qr) {
                     this.currentQR = await qrcode.toDataURL(qr);
                     this.connectionState = 'qr';
+                    this.log('QR Code berhasil digenerate');
                     this.broadcast('qr', { qr: this.currentQR });
                 }
 
                 if (connection === 'close') {
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
+                    const errorMsg = lastDisconnect?.error?.message || 'Connection lost';
                     const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                    console.log(`[${this.sessionId}] Connection closed (status: ${statusCode}). Reconnect: ${shouldReconnect}`);
+                    this.lastDisconnect = { statusCode, message: errorMsg, time: new Date().toISOString() };
+                    this.log(`Connection closed (status: ${statusCode}, msg: ${errorMsg}). Reconnect: ${shouldReconnect}`);
 
                     this.connectionState = 'close';
                     this.currentQR = null;
@@ -744,14 +832,14 @@ class WhatsAppSession {
                     if (shouldReconnect) {
                         setTimeout(() => this.startWhatsApp(), 3000);
                     } else {
-                        console.log(`[${this.sessionId}] Sesi logged out. Menghapus folder auth...`);
+                        this.log('Sesi logged out. Menghapus folder auth...');
                         try {
                             fs.rmSync(this.authDir, { recursive: true, force: true });
                         } catch (e) {}
                         setTimeout(() => this.startWhatsApp(), 3000);
                     }
                 } else if (connection === 'open') {
-                    console.log(`[${this.sessionId}] WhatsApp terhubung sukses!`);
+                    this.log('WhatsApp terhubung sukses!');
                     this.connectionState = 'open';
                     this.currentQR = null;
                     this.currentPairingCode = null;
@@ -1238,7 +1326,8 @@ class WhatsAppSession {
             });
 
         } catch (err) {
-            console.error(`[${this.sessionId}] Gagal start WhatsApp:`, err);
+            this.lastError = { message: err.message, stack: err.stack, time: new Date().toISOString() };
+            this.log(`Gagal start WhatsApp: ${err.message}`);
             this.isStarting = false;
             setTimeout(() => this.startWhatsApp(), 5000);
         }
@@ -1336,8 +1425,80 @@ app.get('/api/status', (req, res) => {
         state: s.connectionState,
         qr: s.currentQR,
         pairingCode: s.currentPairingCode,
-        user: s.currentUser
+        user: s.currentUser,
+        chats: s.getSanitizedChatList()
     });
+});
+
+// 1b. Polling sync endpoint for environments without WebSocket support (e.g. cPanel LiteSpeed FCGI)
+app.get('/api/poll', (req, res) => {
+    const s = req.sessionInstance;
+    const currentJid = req.query.currentJid;
+    const response = {
+        sessionId: s.sessionId,
+        state: s.connectionState,
+        qr: s.currentQR,
+        pairingCode: s.currentPairingCode,
+        user: s.currentUser,
+        chats: s.getSanitizedChatList()
+    };
+    if (currentJid && s.store.messages[currentJid]) {
+        response.currentChatMessages = s.store.messages[currentJid];
+    }
+    res.json(response);
+});
+
+// 1c. Diagnostics & Network Check Endpoint
+app.get('/api/debug', async (req, res) => {
+    const s = req.sessionInstance;
+    let netCheck = 'unknown';
+    try {
+        const https = require('https');
+        await new Promise((resolve) => {
+            const r = https.get('https://web.whatsapp.com', { timeout: 4000 }, (resp) => {
+                netCheck = `HTTP ${resp.statusCode} OK`;
+                resolve();
+            });
+            r.on('error', (err) => {
+                netCheck = `FAILED: ${err.message}`;
+                resolve();
+            });
+            r.on('timeout', () => {
+                netCheck = 'TIMEOUT (Port 443 / WhatsApp slow or blocked)';
+                r.destroy();
+                resolve();
+            });
+        });
+    } catch (e) {
+        netCheck = `ERR: ${e.message}`;
+    }
+
+    res.json({
+        time: new Date().toISOString(),
+        nodeVersion: process.version,
+        sessionId: s.sessionId,
+        connectionState: s.connectionState,
+        hasSock: Boolean(s.sock),
+        isStarting: s.isStarting,
+        currentQR: Boolean(s.currentQR),
+        currentPairingCode: s.currentPairingCode,
+        lastError: s.lastError || null,
+        lastDisconnect: s.lastDisconnect || null,
+        outboundWhatsAppCheck: netCheck,
+        authDirFiles: fs.existsSync(s.authDir) ? fs.readdirSync(s.authDir) : 'DIR_NOT_FOUND',
+        recentLogs: s.logs || []
+    });
+});
+
+// 1d. Reset session auth files and restart
+app.post('/api/session/reset', async (req, res) => {
+    const s = req.sessionInstance;
+    try {
+        const result = await s.reset();
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // 2. Request Pairing Code (by phone number)
@@ -1350,8 +1511,22 @@ app.post('/api/pair', async (req, res) => {
     if (phone.startsWith('0')) phone = '62' + phone.slice(1);
 
     try {
-        if (!s.sock) return res.status(500).json({ error: 'Socket belum siap' });
-        if (s.sock.authState.creds.registered) {
+        if (!s.sock) {
+            if (!s.isStarting) {
+                s.startWhatsApp().catch(() => {});
+            }
+            let waitAttempts = 0;
+            while (!s.sock && waitAttempts < 30) {
+                await new Promise(r => setTimeout(r, 500));
+                waitAttempts++;
+            }
+        }
+
+        if (!s.sock) {
+            return res.status(503).json({ error: 'Server WhatsApp sedang bersiap, mohon tunggu beberapa detik lalu coba klik lagi.' });
+        }
+
+        if (s.sock.authState?.creds?.registered) {
             return res.status(400).json({ error: 'WhatsApp sudah terhubung/terdaftar' });
         }
 
@@ -1946,20 +2121,48 @@ app.post('/api/messages/read', async (req, res) => {
 
     try {
         if (s.sock && s.connectionState === 'open') {
+            const isGroup = canonicalJid.endsWith('@g.us');
             const msgsToCheck = [
                 ...(s.store.messages[canonicalJid] || []),
                 ...(altJid && s.store.messages[altJid] ? s.store.messages[altJid] : [])
             ];
             const unreadMsgs = msgsToCheck.filter(m => !m.fromMe && m.status !== 'READ');
+
+            // 1. Send receipt to the message sender (turns sender's ticks blue)
             if (unreadMsgs.length > 0) {
                 const keys = unreadMsgs.map(m => ({
                     remoteJid: m.remoteJid || canonicalJid,
                     id: m.id,
-                    participant: m.participantJid || undefined
+                    participant: isGroup ? (m.participantJid ? jidNormalizedUser(m.participantJid) : undefined) : undefined
                 }));
-                await s.sock.readMessages(keys).catch(() => {});
+                await s.sock.readMessages(keys).catch(e => {
+                    console.error(`[${s.sessionId}] Error readMessages receipt:`, e?.message || e);
+                });
                 unreadMsgs.forEach(m => m.status = 'READ');
                 s.saveStore();
+            }
+
+            // 2. Sync "Mark as Read" to Primary Smartphone (HP) via WhatsApp App State Sync
+            if (typeof s.sock.chatModify === 'function') {
+                const validLastMsgs = msgsToCheck
+                    .filter(m => m.id && (m.fromMe || !isGroup || m.participantJid))
+                    .slice(-10)
+                    .map(m => ({
+                        key: {
+                            id: m.id,
+                            remoteJid: canonicalJid,
+                            fromMe: Boolean(m.fromMe),
+                            participant: isGroup ? (m.participantJid ? jidNormalizedUser(m.participantJid) : undefined) : undefined
+                        },
+                        messageTimestamp: Math.floor((m.timestamp || Date.now()) / 1000)
+                    }));
+
+                await s.sock.chatModify({
+                    markRead: true,
+                    lastMessages: validLastMsgs
+                }, canonicalJid).catch(e => {
+                    console.error(`[${s.sessionId}] Error chatModify markRead:`, e?.message || e);
+                });
             }
         }
     } catch (e) {
@@ -1991,9 +2194,16 @@ app.post('/api/session/repair', async (req, res) => {
     }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-    console.log('=========================================');
-    console.log(' WaPro Multi-User Relay on Port ' + PORT);
-    console.log(' Web UI: http://localhost:' + PORT);
-    console.log('=========================================');
-});
+if (isNaN(PORT)) {
+    server.listen(PORT, () => {
+        console.log('=========================================');
+        console.log(' WaPro Relay on Socket: ' + PORT);
+        console.log('=========================================');
+    });
+} else {
+    server.listen(PORT, () => {
+        console.log('=========================================');
+        console.log(' WaPro Multi-User Relay on Port: ' + PORT);
+        console.log('=========================================');
+    });
+}

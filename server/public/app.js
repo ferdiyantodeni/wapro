@@ -42,16 +42,19 @@ if (!Array.isArray(savedEmojis) || savedEmojis.length === 0) {
     }
 }
 
-// Multi-User Session Identification
-let sessionId = localStorage.getItem('wapro_session_id');
+// Multi-User Session Identification (Default to 'default' session)
+const urlParams = new URLSearchParams(window.location.search);
+let sessionId = urlParams.get('sessionId');
 if (!sessionId) {
-    if (localStorage.getItem('wapro_pin_token') !== null) {
-        sessionId = 'default';
+    const saved = localStorage.getItem('wapro_session_id');
+    // If saved starts with random sess_, reset to 'default'
+    if (saved && !saved.startsWith('sess_')) {
+        sessionId = saved;
     } else {
-        sessionId = 'sess_' + Math.random().toString(36).substring(2, 8) + Date.now().toString(36).substring(4);
+        sessionId = 'default';
     }
-    localStorage.setItem('wapro_session_id', sessionId);
 }
+localStorage.setItem('wapro_session_id', sessionId);
 
 // DOM Elements
 const connectionPill = document.getElementById('connectionPill');
@@ -77,6 +80,30 @@ const btnRequestPairingCode = document.getElementById('btnRequestPairingCode');
 const pairingBox = document.getElementById('pairingBox');
 const pairingCodeDisplay = document.getElementById('pairingCodeDisplay');
 const qrImage = document.getElementById('qrImage');
+const qrLoading = document.getElementById('qrLoading');
+let userSwitchedToQr = false;
+
+function switchToPairingTab() {
+    userSwitchedToQr = false;
+    tabPairingBtn.classList.add('active');
+    tabQrBtn.classList.remove('active');
+    tabPairingPanel.style.display = 'block';
+    tabQrPanel.style.display = 'none';
+    setTimeout(() => {
+        if (inputPhoneNumber && !inputPhoneNumber.value) {
+            inputPhoneNumber.focus();
+        }
+    }, 80);
+}
+
+function switchToQrTab() {
+    userSwitchedToQr = true;
+    tabQrBtn.classList.add('active');
+    tabPairingBtn.classList.remove('active');
+    tabQrPanel.style.display = 'block';
+    tabPairingPanel.style.display = 'none';
+}
+
 const btnNewChat = document.getElementById('btnNewChat');
 const btnLogout = document.getElementById('btnLogout');
 const newChatModal = document.getElementById('newChatModal');
@@ -602,13 +629,17 @@ function playBeep() {
     } catch (e) {}
 }
 
+// Base path detection (supports sub-paths like /wa/)
+const appBasePath = window.location.pathname.replace(/\/+$/, '').replace(/\/index\.html$/i, '') || '';
+
 // Session Fetch Helper
 async function sessionFetch(url, options = {}) {
     options.headers = {
         ...(options.headers || {}),
         'X-Session-Id': sessionId
     };
-    return fetch(url, options);
+    const targetUrl = url.startsWith('/') ? `${appBasePath}${url}` : `${appBasePath}/${url}`;
+    return fetch(targetUrl, options);
 }
 
 // Status Updater
@@ -625,10 +656,93 @@ function updateConnectionStatus(state, user) {
         connectionPill.classList.add('status-close');
         statusText.textContent = state === 'close' ? 'Terputus' : 'Perlu Login';
         loginModal.style.display = 'flex';
+        if (!userSwitchedToQr) {
+            switchToPairingTab();
+        }
     } else {
         connectionPill.classList.add('status-connecting');
         statusText.textContent = 'Menghubungkan...';
     }
+}
+
+let isWsConnected = false;
+let isPolling = false;
+let pollTimer = null;
+let lastQr = null;
+let lastPairingCode = null;
+
+// HTTP State Synchronization (Fallback for environments without WebSocket support)
+async function syncStateHttp() {
+    if (isPolling) return;
+    isPolling = true;
+    try {
+        const query = currentChatJid ? `?currentJid=${encodeURIComponent(currentChatJid)}` : '';
+        const res = await sessionFetch('/api/poll' + query);
+        if (res.ok) {
+            const data = await res.json();
+            
+            // 1. Connection status
+            if (data.state && (data.state !== connectionState || (data.user?.name !== currentUser?.name))) {
+                updateConnectionStatus(data.state, data.user);
+            }
+
+            // 2. QR code & Pairing code
+            if (data.state === 'qr' && data.qr) {
+                if (data.qr !== lastQr) {
+                    lastQr = data.qr;
+                    showQrCode(data.qr);
+                }
+            } else if (data.state === 'pairing' && data.pairingCode) {
+                if (data.pairingCode !== lastPairingCode) {
+                    lastPairingCode = data.pairingCode;
+                    showPairingCode(data.pairingCode);
+                }
+            } else if (data.state === 'open') {
+                loginModal.style.display = 'none';
+            }
+
+            // 3. Chats sync
+            if (data.chats && Array.isArray(data.chats)) {
+                const oldSignature = allChats.map(c => c.jid + ':' + c.lastMessage + ':' + c.unread).join('|');
+                const newSignature = data.chats.map(c => c.jid + ':' + c.lastMessage + ':' + c.unread).join('|');
+                if (oldSignature !== newSignature) {
+                    allChats = data.chats;
+                    renderChatList(allChats);
+                    allChats.forEach(c => {
+                        if (c.lastMessage) grabEmojisFromText(c.lastMessage);
+                    });
+                }
+            }
+
+            // 4. Current chat messages sync (active if WS is not connected)
+            if (!isWsConnected && currentChatJid && Array.isArray(data.currentChatMessages)) {
+                const oldMsgLen = currentChatMessages.length;
+                const newMsgLen = data.currentChatMessages.length;
+                const lastOldId = oldMsgLen > 0 ? currentChatMessages[oldMsgLen - 1].id : null;
+                const lastNewId = newMsgLen > 0 ? data.currentChatMessages[newMsgLen - 1].id : null;
+                
+                if (oldMsgLen !== newMsgLen || lastOldId !== lastNewId) {
+                    currentChatMessages = data.currentChatMessages;
+                    renderMessages(currentChatMessages);
+                    scrollToBottom();
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[SYNC] HTTP Poll warning:', e.message);
+    } finally {
+        isPolling = false;
+    }
+}
+
+function startPollingLoop() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
+        // Poll every 3s if WS is disconnected, or if not yet connected to WhatsApp (waiting for QR)
+        if (!isWsConnected || connectionState !== 'open') {
+            syncStateHttp();
+        }
+    }, 3000);
 }
 
 // WebSocket Connection
@@ -638,26 +752,38 @@ function initWebSocket() {
     }
 
     const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    ws = new WebSocket(`${protocol}${location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`);
+    const wsEndpoint = `${appBasePath}/ws`;
+    
+    try {
+        ws = new WebSocket(`${protocol}${location.host}${wsEndpoint}?sessionId=${encodeURIComponent(sessionId)}`);
 
-    ws.onopen = () => {
-        console.log(`Connected to WaPro WebSocket [${sessionId}]`);
-    };
+        ws.onopen = () => {
+            console.log(`Connected to WaPro WebSocket [${sessionId}]`);
+            isWsConnected = true;
+        };
 
-    ws.onmessage = (event) => {
-        try {
-            const parsed = JSON.parse(event.data);
-            handleWsEvent(parsed.event, parsed.data);
-        } catch (e) {
-            console.error('WS Parse Error:', e);
-        }
-    };
+        ws.onmessage = (event) => {
+            try {
+                const parsed = JSON.parse(event.data);
+                handleWsEvent(parsed.event, parsed.data);
+            } catch (e) {
+                console.error('WS Parse Error:', e);
+            }
+        };
 
-    ws.onclose = () => {
-        console.log('WS Disconnected. Reconnecting in 2s...');
-        updateConnectionStatus('connecting');
-        setTimeout(initWebSocket, 2000);
-    };
+        ws.onclose = () => {
+            isWsConnected = false;
+            console.log('WS Disconnected. Using HTTP Sync fallback, retrying WS in 5s...');
+            setTimeout(initWebSocket, 5000);
+        };
+
+        ws.onerror = () => {
+            isWsConnected = false;
+        };
+    } catch (e) {
+        isWsConnected = false;
+        console.warn('WebSocket init exception:', e);
+    }
 }
 
 function handleWsEvent(evt, data) {
@@ -750,15 +876,23 @@ function handleWsEvent(evt, data) {
 }
 
 function showQrCode(url) {
-    qrImage.src = url;
+    if (url && typeof url === 'string' && url.startsWith('data:image')) {
+        qrImage.src = url;
+        qrImage.style.display = 'block';
+        if (qrLoading) qrLoading.style.display = 'none';
+    }
     if (connectionState !== 'open') {
         loginModal.style.display = 'flex';
+        if (!userSwitchedToQr) {
+            switchToPairingTab();
+        }
     }
 }
 
 function showPairingCode(code) {
     pairingCodeDisplay.textContent = code;
     pairingBox.style.display = 'block';
+    switchToPairingTab();
     if (connectionState !== 'open') {
         loginModal.style.display = 'flex';
     }
@@ -2455,18 +2589,14 @@ btnRequestPairingCode.addEventListener('click', async () => {
     }
 });
 
-tabPairingBtn.addEventListener('click', () => {
-    tabPairingBtn.classList.add('active');
-    tabQrBtn.classList.remove('active');
-    tabPairingPanel.style.display = 'block';
-    tabQrPanel.style.display = 'none';
-});
+tabPairingBtn.addEventListener('click', switchToPairingTab);
+tabQrBtn.addEventListener('click', switchToQrTab);
 
-tabQrBtn.addEventListener('click', () => {
-    tabQrBtn.classList.add('active');
-    tabPairingBtn.classList.remove('active');
-    tabQrPanel.style.display = 'block';
-    tabPairingPanel.style.display = 'none';
+inputPhoneNumber.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        btnRequestPairingCode.click();
+    }
 });
 
 btnNewChat.addEventListener('click', () => {
@@ -2539,5 +2669,32 @@ if (btnRepairSession) {
     });
 }
 
-// Initial Boot: Connect WebSocket for this session
+const btnResetSession = document.getElementById('btnResetSession');
+if (btnResetSession) {
+    btnResetSession.addEventListener('click', async () => {
+        if (!confirm('Reset sesi akan membersihkan file autentikasi lama dan memulai koneksi baru ke WhatsApp. Lanjutkan?')) return;
+        btnResetSession.disabled = true;
+        btnResetSession.textContent = 'Mereset...';
+        try {
+            const res = await sessionFetch('/api/session/reset', { method: 'POST' });
+            const data = await res.json();
+            alert(data.message || 'Sesi berhasil direset! Mohon tunggu beberapa detik.');
+            lastQr = null;
+            lastPairingCode = null;
+            if (qrImage) { qrImage.src = ''; qrImage.style.display = 'none'; }
+            const qrLoading = document.getElementById('qrLoading');
+            if (qrLoading) qrLoading.style.display = 'flex';
+            setTimeout(syncStateHttp, 2000);
+        } catch (e) {
+            alert('Error reset sesi: ' + e.message);
+        } finally {
+            btnResetSession.disabled = false;
+            btnResetSession.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Reset Sesi Baru';
+        }
+    });
+}
+
+// Initial Boot: Immediate HTTP sync + background polling loop + WebSocket
+syncStateHttp();
+startPollingLoop();
 initWebSocket();

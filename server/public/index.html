@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WaPro - WhatsApp Web Relay</title>
-    <link rel="stylesheet" href="style.css?v=5.2">
+    <link rel="stylesheet" href="style.css?v=5.5">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="dark-theme">
@@ -165,9 +165,9 @@
             </div>
 
             <div class="tab-panel" id="tabPairingPanel">
-                <p class="tab-instruction">Masukkan nomor WhatsApp eta HP Anda:</p>
+                <p class="tab-instruction">Masukkan nomor WhatsApp HP Anda:</p>
                 <div class="input-group">
-                    <input type="tel" id="inputPhoneNumber" placeholder="Contoh: 08123456789 atau 628123456789">
+                    <input type="tel" id="inputPhoneNumber" placeholder="Contoh: 08123456789 atau 628123456789" autocomplete="tel">
                     <button id="btnRequestPairingCode">Dapatkan Kode</button>
                 </div>
                 <div class="pairing-box" id="pairingBox" style="display: none;">
@@ -175,7 +175,7 @@
                     <div class="pairing-code" id="pairingCodeDisplay">--------</div>
                     <ol class="pairing-steps">
                         <li>Buka WhatsApp di HP Anda</li>
-                        <li>Tekan Titik Tiga (pojok kanan atas) > <b>Perangkat Tertaut</b></li>
+                        <li>Tekan Titik Tiga (pojok kanan atas) &gt; <b>Perangkat Tertaut</b></li>
                         <li>Pilih <b>Tautkan Perangkat</b></li>
                         <li>Pilih <b>Tautkan dengan nomor telepon saja</b> di bagian bawah</li>
                     </ol>
@@ -184,9 +184,19 @@
 
             <div class="tab-panel" id="tabQrPanel" style="display: none;">
                 <div class="qr-container">
-                    <img id="qrImage" src="" alt="QR Code WhatsApp">
-                    <p>Buka WhatsApp di HP > Perangkat Tertaut > Scan QR Code ini</p>
+                    <div id="qrLoading" class="qr-loading-box">
+                        <i class="fa-solid fa-spinner fa-spin" style="font-size: 28px; color: #00a884; margin-bottom: 12px;"></i>
+                        <p style="font-size: 13px; color: #8696a0; margin: 0;">Menyiapkan QR Code dari server WhatsApp...</p>
+                        <p style="font-size: 11px; color: #667781; margin-top: 6px;">Atau gunakan tab Kode Pairing di atas agar lebih cepat.</p>
+                    </div>
+                    <img id="qrImage" src="" alt="QR Code WhatsApp" style="display: none;">
+                    <p class="qr-hint">Buka WhatsApp di HP &gt; Perangkat Tertaut &gt; Scan QR Code ini</p>
                 </div>
+            </div>
+
+            <div class="modal-login-footer">
+                <button type="button" class="btn-text-subtle" id="btnResetSession" title="Hapus sesi lama dan mulai dari awal"><i class="fa-solid fa-rotate-left"></i> Reset Sesi Baru</button>
+                <a href="api/debug" target="_blank" class="btn-text-subtle" title="Buka diagnosa status server"><i class="fa-solid fa-bug"></i> Cek Diagnostik Server</a>
             </div>
         </div>
     </div>
@@ -369,6 +379,6 @@
         <i class="fa-solid fa-circle-check"></i> <span id="toastText">Teks disalin</span>
     </div>
 
-    <script src="app.js?v=5.2"></script>
+    <script src="app.js?v=5.5"></script>
 </body>
 </html>

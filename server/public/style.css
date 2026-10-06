@@ -1285,6 +1285,29 @@ body {
   padding-left: 20px;
 }
 
+.qr-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr-loading-box {
+  width: 240px;
+  height: 240px;
+  border-radius: 10px;
+  background: #111b21;
+  border: 1px dashed #374248;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  padding: 20px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
 .qr-container img {
   width: 240px;
   height: 240px;
@@ -1292,6 +1315,35 @@ body {
   background: #fff;
   padding: 10px;
   margin-bottom: 12px;
+}
+
+.modal-login-footer {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #222e35;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.btn-text-subtle {
+  background: none;
+  border: none;
+  color: #8696a0;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.btn-text-subtle:hover {
+  color: #00a884;
+  background-color: #202c33;
 }
 
 .modal-footer {
