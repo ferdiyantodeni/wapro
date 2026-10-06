@@ -777,8 +777,8 @@ class WhatsAppSession {
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
                 },
                 browser: Browsers.ubuntu('Chrome'),
-                syncFullHistory: false,
-                shouldSyncHistoryMessage: () => false,
+                syncFullHistory: true,
+                shouldSyncHistoryMessage: () => true,
                 generateHighQualityLinkPreview: true,
                 msgRetryCounterCache: this.msgRetryCounterCache,
                 maxMsgRetryCount: 5,
@@ -1578,7 +1578,21 @@ app.get('/api/messages/:jid', async (req, res) => {
     if (canonicalJid !== jid && s.store.chats[jid]) {
         s.mergeChats(jid, canonicalJid);
     }
-    const msgs = s.store.messages[canonicalJid] || [];
+    const altJid = s.store.lidMap ? s.store.lidMap[canonicalJid] : null;
+    const rawList = [
+        ...(s.store.messages[canonicalJid] || []),
+        ...(altJid && s.store.messages[altJid] ? s.store.messages[altJid] : []),
+        ...(jid !== canonicalJid && s.store.messages[jid] ? s.store.messages[jid] : [])
+    ];
+    const seen = new Set();
+    const msgs = [];
+    for (const m of rawList) {
+        if (m && m.id && !seen.has(m.id)) {
+            seen.add(m.id);
+            msgs.push(m);
+        }
+    }
+    msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
     res.json(msgs);
 });
 
@@ -2022,59 +2036,65 @@ app.post('/api/messages/edit', async (req, res) => {
             return res.status(503).json({ error: 'WhatsApp belum terhubung' });
         }
 
+        const canonicalJid = await s.resolveCanonicalJid(jid);
+        const targetJid = canonicalJid || jid;
+        const isGroup = targetJid.endsWith('@g.us');
+        const altJid = s.store.lidMap ? s.store.lidMap[targetJid] : null;
+
+        const msgs = [
+            ...(s.store.messages[targetJid] || []),
+            ...(altJid && s.store.messages[altJid] ? s.store.messages[altJid] : []),
+            ...(s.store.messages[jid] || [])
+        ];
+        const target = msgs.find(m => m.id === id);
+
         const editKey = {
-            remoteJid: jid,
+            remoteJid: target?.remoteJid || targetJid,
             fromMe: true,
-            id: id
+            id: id,
+            participant: isGroup ? (target?.participantJid ? jidNormalizedUser(target.participantJid) : undefined) : undefined
         };
 
-        // Try sending WhatsApp protocol edit message
-        try {
-            await s.sock.sendMessage(jid, {
-                text: text || '',
-                edit: editKey
-            });
-        } catch (sockErr) {
-            console.warn(`[${s.sessionId}] Warning sock.sendMessage edit:`, sockErr.message);
-        }
+        // Send WhatsApp protocol edit message
+        await s.sock.sendMessage(targetJid, {
+            text: text || '',
+            edit: editKey
+        });
 
         let updatedMsgType = 'text';
         let updatedMedia = null;
 
-        if (s.store.messages[jid]) {
-            const target = s.store.messages[jid].find(m => m.id === id);
-            if (target) {
-                target.text = text || '';
-                target.isEdited = true;
+        if (target) {
+            target.text = text || '';
+            target.isEdited = true;
 
-                if (imageBase64) {
-                    target.msgType = 'image';
-                    target.mediaBase64 = imageBase64;
-                    target.rawMessage = {
-                        imageMessage: {
-                            caption: text || ''
-                        }
-                    };
-                } else if (removeImage) {
-                    target.msgType = 'text';
-                    target.mediaBase64 = null;
-                    target.rawMessage = {
-                        conversation: text || ''
-                    };
-                } else if (target.msgType === 'image') {
-                    if (target.rawMessage?.imageMessage) {
-                        target.rawMessage.imageMessage.caption = text || '';
+            if (imageBase64) {
+                target.msgType = 'image';
+                target.mediaBase64 = imageBase64;
+                target.rawMessage = {
+                    imageMessage: {
+                        caption: text || ''
                     }
-                } else {
-                    target.rawMessage = {
-                        conversation: text || ''
-                    };
+                };
+            } else if (removeImage) {
+                target.msgType = 'text';
+                target.mediaBase64 = null;
+                target.rawMessage = {
+                    conversation: text || ''
+                };
+            } else if (target.msgType === 'image') {
+                if (target.rawMessage?.imageMessage) {
+                    target.rawMessage.imageMessage.caption = text || '';
                 }
-
-                updatedMsgType = target.msgType || 'text';
-                updatedMedia = target.mediaBase64 || null;
-                s.saveStore();
+            } else {
+                target.rawMessage = {
+                    conversation: text || ''
+                };
             }
+
+            updatedMsgType = target.msgType || 'text';
+            updatedMedia = target.mediaBase64 || null;
+            s.saveStore();
         }
 
         s.broadcast('message_edited', {
