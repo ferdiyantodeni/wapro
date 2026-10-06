@@ -830,6 +830,11 @@ class WhatsAppSession {
 
                     this.isStarting = false;
                     if (shouldReconnect) {
+                        // If it's an unauthenticated temporary session and no client is connected, stop reconnecting
+                        if (this.sessionId !== 'default' && (!this.sock?.authState?.creds?.registered) && this.wsClients.size === 0) {
+                            this.log(`Sesi temporer ${this.sessionId} tidak aktif dan belum login. Menghentikan reconnect.`);
+                            return;
+                        }
                         setTimeout(() => this.startWhatsApp(), 3000);
                     } else {
                         this.log('Sesi logged out. Menghapus folder auth...');
@@ -1376,14 +1381,31 @@ function getOrCreateSession(sessionId) {
     return session;
 }
 
-// Scan and boot existing sessions on server launch
+// Scan and boot existing sessions on server launch (only boot registered ones or default)
 if (fs.existsSync(SESSIONS_DIR)) {
     try {
         const dirs = fs.readdirSync(SESSIONS_DIR);
         for (const d of dirs) {
             const p = path.join(SESSIONS_DIR, d);
             if (fs.statSync(p).isDirectory()) {
-                getOrCreateSession(d);
+                const credsFile = path.join(p, 'auth', 'creds.json');
+                let isRegistered = false;
+                if (fs.existsSync(credsFile)) {
+                    try {
+                        const credsData = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+                        isRegistered = Boolean(credsData.registered);
+                    } catch (e) {}
+                }
+
+                if (d === 'default' || isRegistered) {
+                    getOrCreateSession(d);
+                } else if (d.startsWith('sess_')) {
+                    // Clean up junk ghost session directories that never logged in
+                    console.log(`[BOOT] Membersihkan folder sesi hantu tak terpakai: ${d}`);
+                    try {
+                        fs.rmSync(p, { recursive: true, force: true });
+                    } catch (err) {}
+                }
             }
         }
     } catch (e) {}
